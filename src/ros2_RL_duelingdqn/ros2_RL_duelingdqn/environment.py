@@ -28,7 +28,7 @@ import datetime
 MAX_STEPS = 1000
 NUM_EPISODES = 1000
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_calculator/ros2_RL_calculator")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_duelingdqn/ros2_RL_duelingdqn")
 print("current pose : ", os.getcwd())
 
 # Python program raising
@@ -247,11 +247,13 @@ class Environment(Node):
                     episode_10_array[episode % 10] = step
 
                     if self.closest_waypoint < (len(self.waypoint) - 1 - 3): # 途中で上手く走行できなかったら罰則として-1
+                        print("[失敗]報酬 : - 1")
                         reward = torch.FloatTensor([-1.0])
                         complete_episodes = 0 # 連続成功記録をリセット
                         path_record.to_csv("./data/learning_log_{}_ep{}_failure.csv".format(self.now_time, episode))
                     
                     else: # 何事もなく、上手く走行出来たら報酬として+1
+                        print("[成功]報酬 : + 1")
                         reward = torch.FloatTensor([1.0])
                         complete_episodes = complete_episodes + 1 # 連続成功記録を+1
                         path_record.to_csv("./data/learning_log_{}_ep{}_success.csv".format(self.now_time, episode))
@@ -266,8 +268,11 @@ class Environment(Node):
                 # メモリに経験を追加
                 self.agent.memorize(state, action, state_next, reward)
 
+                # TD誤差メモリにTD誤差を追加
+                self.agent.memorize_td_error(0)
+
                 # Experience ReplayでQ関数を更新
-                self.agent.update_q_function()
+                self.agent.update_q_function(episode)
 
                 state = state_next
                 # print("self.simulation_stop_flag : ", self.simulation_stop_flag)
@@ -284,8 +289,14 @@ class Environment(Node):
                         writer = csv.writer(f)
                         writer.writerow([episode, step, episode_10_array.mean()])
                     
+                    self.agent.update_td_error_memory()
+
+                    # ターゲットネットワークを更新
+                    if (episode % 2 == 0):
+                        self.agent.update_target_q_function()
+                    
                     if episode % 5 == 0:
-                        torch.save(self.agent.brain.model, "./data/weight/episode_{}.pth".format(episode))
+                        torch.save(self.agent.brain.main_q_network, "./data/weight/episode_{}.pth".format(episode))
                     
                     time.sleep(0.5)
                     break
