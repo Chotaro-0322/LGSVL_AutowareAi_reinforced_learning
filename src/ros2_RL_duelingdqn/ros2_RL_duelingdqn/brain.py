@@ -103,11 +103,21 @@ class Brain:
         self.main_q_network = Net(n_in, n_mid, n_out)
         self.target_q_network = Net(n_in, n_mid, n_out)
 
+        self.main_q_network = self.init_weight(self.main_q_network)
+        self.target_q_network = self.init_weight(self.target_q_network)
+
         print(self.main_q_network)
         
         self.optimizer = optim.Adam(self.main_q_network.parameters(), lr=0.0001)
 
         self.td_error_memory = TDerrorMemory(CAPACITY)
+
+    def init_weight(self, net):
+        if isinstance(net, nn.Linear):
+            nn.init.kaming_uniform_(net.weight.data)
+            if net.bias is not None:
+                nn.init.constant_(net.bias, 0.0)
+        return net
 
     def replay(self, episode):
         if len(self.memory) < BATCH_SIZE:
