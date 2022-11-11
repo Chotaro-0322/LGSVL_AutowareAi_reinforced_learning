@@ -191,7 +191,7 @@ class Environment(Node):
         # print("pose_difference : ", error_dist)
 
         done = False
-        if error_dist > 1.3:
+        if error_dist > 1.0:
             done = True
         if self.closest_waypoint >= (len(self.waypoint) - 1 - 5):
             done = True
@@ -213,6 +213,12 @@ class Environment(Node):
         self.simulation_stop_flag = True # シミュレータを終了させる
         self.env_thread.join()
 
+    def pandas_init(self):
+        self.path_record = pd.DataFrame({"current_pose_x" : [self.current_pose.pose.position.x], "current_pose_y" : [self.current_pose.pose.position.y], "current_pose_z" : [self.current_pose.pose.position.z], 
+                                    "closest_waypoint_x" : [self.waypoint[self.closest_waypoint][0]], "closest_waypoint_y" : [self.waypoint[self.closest_waypoint][1]], "closest_waypoint_z" : [self.waypoint[self.closest_waypoint][2]],
+                                    "lookahead_distance" : [0], "error" : [0]})
+            # print("Init path_record : \n", path_record)
+
 
     def run(self):
         episode_10_array = np.zeros(10) # 10試行分の"経路から外れない", "IMUによる蛇行がしない"step数を格納し, 平均ステップ数を出力に利用
@@ -224,6 +230,8 @@ class Environment(Node):
         with open('data/episode_mean10_{}.csv'.format(self.now_time), 'a') as f:
             writer = csv.writer(f)
             writer.writerow(["eisode", "finished_step", "10_step_meaning"])
+
+        self.pandas_init()
 
         self.init_environment()
         
@@ -239,10 +247,6 @@ class Environment(Node):
             state = torch.from_numpy(state).type(torch.FloatTensor)
             state = torch.unsqueeze(state, 0)
 
-            path_record = pd.DataFrame({"current_pose_x" : [self.current_pose.pose.position.x], "current_pose_y" : [self.current_pose.pose.position.y], "current_pose_z" : [self.current_pose.pose.position.z], 
-                                        "closest_waypoint_x" : [self.waypoint[self.closest_waypoint][0]], "closest_waypoint_y" : [self.waypoint[self.closest_waypoint][1]], "closest_waypoint_z" : [self.waypoint[self.closest_waypoint][2]],
-                                        "lookahead_distance" : [0], "error" : [0]})
-            # print("Init path_record : \n", path_record)
 
             for step in range(NUM_ADVANCED_STEP):
             # while self.closest_waypoint < (len(self.waypoint) - 1 - 5) and self.simulation_stop_flag == False: # 1エピソードのループ ※len(waypoint)はwaypointの総数だが, 0インデックスを考慮して -1 その次に 経路の終わりから3つ前までという意味で -3
@@ -263,7 +267,7 @@ class Environment(Node):
                 
                 for i in range(NUM_PROCESSES):
                     self.obs_np[i], self.reward_np[i], self.done_np[i], error_distance = self.check_error() # errorを次のobsercation_next(次の状態)として扱う
-                    path_record = path_record.append({"current_pose_x" : self.current_pose.pose.position.x,
+                    self.path_record = self.path_record.append({"current_pose_x" : self.current_pose.pose.position.x,
                                         "current_pose_y" : self.current_pose.pose.position.y,
                                         "current_pose_z" : self.current_pose.pose.position.z,
                                         "closest_waypoint_x" : self.waypoint[self.closest_waypoint][0],
@@ -272,11 +276,16 @@ class Environment(Node):
                                         "lookahead_distance" : self.lookahead_dist.data,
                                         "error" : error_distance
                                         }, ignore_index=True)
+                    
+                    # print("path_record : \n", self.path_record)
 
                     if self.done_np[i]: # simulationが止まっていなかったらFalse, 終了するならTrue
                         state_next = None
 
                         episode_10_array[episode % 10] = frame
+                        
+                        if episode % 10 == 0: # 10episodeごとにウェイトを保存
+                            torch.save(self.global_brain.actor_critic, "./data/weight/episode_{}_finish.pth".format(episode))
 
                         if i == 0: # 分散処理の最初の項が終了した場合、結果を記録
                             self.finish_environment()
@@ -291,15 +300,16 @@ class Environment(Node):
                             print("[失敗]報酬 : - 1")
                             self.reward_np[i] = torch.FloatTensor([-1.0])
                             complete_episodes = 0 # 連続成功記録をリセット
-                            path_record.to_csv("./data/learning_log_{}_ep{}_failure.csv".format(self.now_time, episode))
+                            self.path_record.to_csv("./data/learning_log_{}_ep{}_failure.csv".format(self.now_time, episode))
                         
                         else: # 何事もなく、上手く走行出来たら報酬として+1
                             print("[成功]報酬 : + 1")
                             self.reward_np[i] = torch.FloatTensor([1.0])
                             complete_episodes = complete_episodes + 1 # 連続成功記録を+1
-                            path_record.to_csv("./data/learning_log_{}_ep{}_success.csv".format(self.now_time, episode))
+                            self.path_record.to_csv("./data/learning_log_{}_ep{}_success.csv".format(self.now_time, episode))
 
-                        # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない)
+                        self.pandas_init()
+                        # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
                         self.finish_environment()
                         time.sleep(3)
                         self.init_environment()
@@ -353,7 +363,7 @@ class Environment(Node):
             if self.final_rewards.sum().numpy() >= NUM_COMPLETE_EP:
                 print("10回連続成功")
                 
-                torch.save(self.agent.brain.model, "./data/weight/episode_{}_finish.pth".format(episode))
+                torch.save(self.global_brain.actor_critic, "./data/weight/episode_{}_finish.pth".format(episode))
                 print("無事に終了")
                 episode_final = True
                 break
