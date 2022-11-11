@@ -31,7 +31,7 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 5
 NUM_COMPLETE_EP = 10
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_duelingdqn/ros2_RL_duelingdqn")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_a2c/ros2_RL_a2c")
 print("current pose : ", os.getcwd())
 
 # Python program raising
@@ -311,6 +311,8 @@ class Environment(Node):
 
                         # state_next = torch.unsqueeze(state_next, 0)
                         self.each_step[i] += 1
+                    
+                frame += 1
 
                 # 報酬をtensorに変換し、施行の総報酬に足す
                 reward = torch.from_numpy(self.reward_np).float()
