@@ -31,16 +31,18 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 5
 NUM_COMPLETE_EP = 10
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_a2c/ros2_RL_a2c")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
 print("current pose : ", os.getcwd())
+
+t_delta = datetime.timedelta(hours=9)
+JST = datetime.timezone(t_delta, "JST")
+now_JST = datetime.datetime.now(JST)
+now_time = now_JST.strftime("%Y%m%d%H%M%S")
+os.makedirs("./data_{}/weight".format(now_time))
 
 # Python program raising
 # exceptions in a python
 # thread
- 
-import threading
-import ctypes
-import time
   
 class Environment(Node):
     def __init__(self):
@@ -67,10 +69,6 @@ class Environment(Node):
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
         self.waypoint = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
-        t_delta = datetime.timedelta(hours=9)
-        JST = datetime.timezone(t_delta, "JST")
-        self.now_JST = datetime.datetime.now(JST)
-        self.now_time = self.now_JST.strftime("%Y%m%d%H%M%S")
         # print("waypoint : \n", self.waypoint)
         # print("GPU is : ", torch.cuda.is_available())
 
@@ -228,7 +226,7 @@ class Environment(Node):
         self.closest_waypoint = 1
         episode_final = False # 最後の試行フラグ
 
-        with open('data/episode_mean10_{}.csv'.format(self.now_time), 'a') as f:
+        with open('data/episode_mean10_{}.csv'.format(now_time), 'a') as f:
             writer = csv.writer(f)
             writer.writerow(["eisode", "finished_step", "10_step_meaning"])
 
@@ -287,12 +285,12 @@ class Environment(Node):
                         episode_10_array[episode % 10] = frame
                         
                         if episode % 10 == 0: # 10episodeごとにウェイトを保存
-                            torch.save(self.global_brain.actor_critic, "./data/weight/episode_{}_finish.pth".format(episode))
+                            torch.save(self.global_brain.actor_critic, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
 
                         if i == 0: # 分散処理の最初の項が終了した場合、結果を記録
                             self.finish_environment()
                             print("%d Episode: Finished after %d frame : 10試行の平均frame数 = %.1lf" %(episode, frame, episode_10_array.mean()))
-                            with open('data/episode_mean10_{}.csv'.format(self.now_time).format(), 'a') as f:
+                            with open('data/episode_mean10_{}.csv'.format(now_time).format(), 'a') as f:
                                 writer = csv.writer(f)
                                 writer.writerow([episode, frame, episode_10_array.mean()])
                             episode += 1
@@ -302,13 +300,13 @@ class Environment(Node):
                             print("[失敗]報酬 : - 1")
                             self.reward_np[i] = torch.FloatTensor([-1.0])
                             complete_episodes = 0 # 連続成功記録をリセット
-                            self.path_record.to_csv("./data/learning_log_{}_ep{}_failure.csv".format(self.now_time, episode))
+                            self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
                         
                         else: # 何事もなく、上手く走行出来たら報酬として+1
                             print("[成功]報酬 : + 1")
                             self.reward_np[i] = torch.FloatTensor([1.0])
                             complete_episodes = complete_episodes + 1 # 連続成功記録を+1
-                            self.path_record.to_csv("./data/learning_log_{}_ep{}_success.csv".format(self.now_time, episode))
+                            self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
 
                         self.pandas_init()
                         # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
@@ -369,7 +367,7 @@ class Environment(Node):
             if complete_episodes >= NUM_COMPLETE_EP:
                 print("10回連続成功")
                 
-                torch.save(self.global_brain.actor_critic, "./data/weight/episode_{}_finish.pth".format(episode))
+                torch.save(self.global_brain.actor_critic, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
                 print("無事に終了")
                 episode_final = True
                 break
