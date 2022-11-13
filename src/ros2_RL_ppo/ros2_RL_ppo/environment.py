@@ -29,7 +29,7 @@ MAX_STEPS = 200
 NUM_EPISODES = 1000
 NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 10
-NUM_COMPLETE_EP = 10
+NUM_COMPLETE_EP = 8
 
 os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
 print("current pose : ", os.getcwd())
@@ -221,12 +221,13 @@ class Environment(Node):
 
     def run(self):
         episode_10_array = np.zeros(10) # 10試行分の"経路から外れない", "IMUによる蛇行がしない"step数を格納し, 平均ステップ数を出力に利用
+        complete_episodes = np.zeros(10)
 
-        complete_episodes = 0 # 連続で上手く走行した試行数
+        # complete_episodes = 0 # 連続で上手く走行した試行数
         self.closest_waypoint = 1
         episode_final = False # 最後の試行フラグ
 
-        with open('data/episode_mean10_{}.csv'.format(now_time), 'a') as f:
+        with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time), 'a') as f:
             writer = csv.writer(f)
             writer.writerow(["eisode", "finished_step", "10_step_meaning"])
 
@@ -299,13 +300,13 @@ class Environment(Node):
                         if self.closest_waypoint < (len(self.waypoint) - 1 - 15): # 途中で上手く走行できなかったら罰則として-1
                             print("[失敗]報酬 : - 1")
                             self.reward_np[i] = torch.FloatTensor([-1.0])
-                            complete_episodes = 0 # 連続成功記録をリセット
+                            complete_episodes[episode % 10] = 0 # 連続成功記録をリセット
                             self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
                         
                         else: # 何事もなく、上手く走行出来たら報酬として+1
                             print("[成功]報酬 : + 1")
                             self.reward_np[i] = torch.FloatTensor([1.0])
-                            complete_episodes = complete_episodes + 1 # 連続成功記録を+1
+                            complete_episodes[episode % 10] = 1 # 連続成功記録を+1
                             self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
 
                         self.pandas_init()
@@ -366,8 +367,8 @@ class Environment(Node):
 
             self.rollouts.after_update()
 
-            if complete_episodes >= NUM_COMPLETE_EP:
-                print("10回連続成功")
+            if np.sum(complete_episodes) >= NUM_COMPLETE_EP:
+                print("8/10回連続成功")
                 
                 torch.save(self.global_brain.actor_critic, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
                 print("無事に終了")
