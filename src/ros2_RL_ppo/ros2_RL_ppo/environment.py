@@ -88,6 +88,7 @@ class Environment(Node):
         self.rollouts = RolloutStorage(NUM_ADVANCED_STEP, NUM_PROCESSES, self.obs_shape)
         self.episode_rewards = torch.zeros([NUM_PROCESSES, 1]) # 現在の施行の報酬を保持
         self.final_rewards = torch.zeros([NUM_PROCESSES, 1]) # 最後の施行の報酬を保持
+        self.old_action_probs = torch.zeros([NUM_ADVANCED_STEP, NUM_PROCESSES, 1]) # ratioの計算のため
         self.obs_np = np.zeros([NUM_PROCESSES, self.obs_shape]) 
         self.reward_np = np.zeros([NUM_PROCESSES, 1])
         self.done_np = np.zeros([NUM_PROCESSES, 1])
@@ -252,7 +253,7 @@ class Environment(Node):
             # while self.closest_waypoint < (len(self.waypoint) - 1 - 5) and self.simulation_stop_flag == False: # 1エピソードのループ ※len(waypoint)はwaypointの総数だが, 0インデックスを考慮して -1 その次に 経路の終わりから3つ前までという意味で -3
                 # print("state : ", state)
                 with torch.no_grad():
-                    action = self.actor_critic.act(self.rollouts.observations[step])
+                    action, self.old_action_probs[step] = self.actor_critic.act(self.rollouts.observations[step])
                 actions = action.squeeze(1).numpy()
                 
                 # action(purepursuit or 無限遠点)をパブリッシュしてpure pursuit本体に送る
@@ -358,7 +359,11 @@ class Environment(Node):
             
             self.rollouts.compute_returns(next_value)
 
-            self.global_brain.update(self.rollouts)
+            if j == 0:
+                self.global_brain.update(self.rollouts, self.old_action_probs, first_episode=True)
+            else:
+                self.global_brain.update(self.rollouts, self.old_action_probs, first_episode=False)
+
             self.rollouts.after_update()
 
             if complete_episodes >= NUM_COMPLETE_EP:
@@ -369,7 +374,7 @@ class Environment(Node):
                 episode_final = True
                 break
 
-            frame += 1
+            # frame += 1
             
             
             

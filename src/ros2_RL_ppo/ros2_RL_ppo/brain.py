@@ -18,6 +18,7 @@ NUM_ADVANCED_STEP = 5
 value_loss_coef = 0.5
 entropy_coef = 0.01
 max_grad_norm = 0.5
+config_clip = 0.2
 
 
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
@@ -72,8 +73,12 @@ class Net(nn.Module):
     def act(self, x):
         value, actor_output = self(x)
         action_probs = F.softmax(actor_output, dim=1)
+        # print("action_probs : ", action_probs)
         action = action_probs.multinomial(num_samples=1)
-        return action
+        # print("action : ", action.squeeze())
+        max_action_probs = action_probs.squeeze()[action.squeeze()] # 選ばれた行動の確率を求める
+        # print("max_action_probs : ", max_action_probs)
+        return action, max_action_probs
 
     def get_value(self, x):
         value, actor_output = self(x)
@@ -84,12 +89,19 @@ class Net(nn.Module):
 
         log_probs = F.log_softmax(actor_output, dim=1)
 
+        action_probs = F.softmax(actor_output, dim=1)
+        action = action_probs.multinomial(num_samples=1)
+        # print("action : ", action.squeeze())
+        # print("action_prob : ", action_probs)
+        # print("max_action_probs : ", action_probs.max(1)[0])
+        max_action_probs = action_probs.max(1)[0] # 選ばれた行動の確率を求める
+
         action_log_probs = log_probs.gather(1, actions)
 
         probs = F.softmax(actor_output, dim=1)
         entropy = -(log_probs * probs).sum(-1).mean()
 
-        return value, action_log_probs, entropy
+        return value, action_log_probs, entropy, max_action_probs
 
 class Brain:
     def __init__(self, actor_critic):
@@ -105,24 +117,38 @@ class Brain:
                 nn.init.constant_(net.bias, 0.0)
         return net
     
-    def update(self, rollouts, first_episode=False): # first_episode==Trueのとき、それは最初の試行であり、self.old_r_thera = torch.tensor([1, 1, 1, 1, 1...])を使う
+    def update(self, rollouts, old_action_probs, first_episode=False): # first_episode==Trueのとき、それは最初の試行であり、self.old_r_thera = torch.tensor([1, 1, 1, 1, 1...])を使う
         obs_shape = rollouts.observations.size()[2]
         # print("obs_shape : ", obs_shape)
         num_steps = NUM_ADVANCED_STEP
         num_processes = NUM_PROCESSES
 
-        values, action_log_probs, entropy = self.actor_critic.evaluate_actions(rollouts.observations[:-1].view(-1, obs_shape), rollouts.actions.view(-1, 1))
+        values, action_log_probs, entropy, action_probs = self.actor_critic.evaluate_actions(rollouts.observations[:-1].view(-1, obs_shape), rollouts.actions.view(-1, 1))
 
         values = values.view(num_steps, num_processes, 1) # torch.Size([5, 1, 1])
         action_log_probs = action_log_probs.view(num_steps, num_processes, 1)
+        action_probs = action_probs.view(num_steps, num_processes, 1)
+        # print("action_log_probs : ", action_probs.size())
+        if first_episode == True:
+            ratio = torch.ones(num_steps, num_processes, 1)
+            pass
+        else:
+            ratio = torch.div(action_probs, old_action_probs + 0.001)
+        # print("action_probs : ", action_probs)
+        # print("old_action_probs : ", old_action_probs)
+        # print("ratio : ", ratio)
 
         advantages = rollouts.returns[:-1] - values # torch.size([5, 1, 1])
 
         value_loss = advantages.pow(2).mean()
 
-        action_gain = (action_log_probs*advantages.detach()).mean()
+        clipped_advantage = torch.where(advantages > 0, (1 + config_clip)*advantages, (1 - config_clip)*advantages)
+        clipped_loss = torch.min(ratio*advantages.detach(), clipped_advantage).mean()
+        # print("clipped_loss : ", clipped_loss)
+        # action_gain = (action_log_probs*advantages.detach()).mean() # これはa2cのloss
+        # print("action_gain : ", action_gain)
 
-        total_loss = (value_loss * value_loss_coef - action_gain - entropy * entropy_coef)
+        total_loss = (value_loss * value_loss_coef - clipped_loss - entropy * entropy_coef)
 
         self.actor_critic.train()
         self.optimizer.zero_grad()
