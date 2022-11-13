@@ -28,7 +28,7 @@ import datetime
 MAX_STEPS = 200
 NUM_EPISODES = 1000
 NUM_PROCESSES = 1
-NUM_ADVANCED_STEP = 5
+NUM_ADVANCED_STEP = 10
 NUM_COMPLETE_EP = 10
 
 os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
@@ -246,12 +246,12 @@ class Environment(Node):
             state = torch.from_numpy(state).type(torch.FloatTensor)
             state = torch.unsqueeze(state, 0)
 
-
+            tmp_action_probs = torch.zeros([NUM_ADVANCED_STEP, NUM_PROCESSES, 1])
             for step in range(NUM_ADVANCED_STEP):
             # while self.closest_waypoint < (len(self.waypoint) - 1 - 5) and self.simulation_stop_flag == False: # 1エピソードのループ ※len(waypoint)はwaypointの総数だが, 0インデックスを考慮して -1 その次に 経路の終わりから3つ前までという意味で -3
                 # print("state : ", state)
                 with torch.no_grad():
-                    action, self.old_action_probs[step] = self.actor_critic.act(self.rollouts.observations[step])
+                    action, tmp_action_probs[step] = self.actor_critic.act(self.rollouts.observations[step])
                 actions = action.squeeze(1).numpy()
                 
                 # action(purepursuit or 無限遠点)をパブリッシュしてpure pursuit本体に送る
@@ -361,6 +361,8 @@ class Environment(Node):
                 self.global_brain.update(self.rollouts, self.old_action_probs, first_episode=True)
             else:
                 self.global_brain.update(self.rollouts, self.old_action_probs, first_episode=False)
+            
+            self.old_action_probs = tmp_action_probs # 昔(old)のaction_probsをここで保存
 
             self.rollouts.after_update()
 

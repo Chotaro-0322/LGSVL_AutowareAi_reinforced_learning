@@ -14,7 +14,7 @@ GAMMA = 0.99
 TD_ERROR_EPSILON = 0.0001
 
 NUM_PROCESSES = 1
-NUM_ADVANCED_STEP = 5
+NUM_ADVANCED_STEP = 10
 value_loss_coef = 0.5
 entropy_coef = 0.01
 max_grad_norm = 0.5
@@ -76,7 +76,7 @@ class Net(nn.Module):
         # print("action_probs : ", action_probs)
         action = action_probs.multinomial(num_samples=1)
         # print("action : ", action.squeeze())
-        max_action_probs = action_probs.squeeze()[action.squeeze()] # 選ばれた行動の確率を求める
+        max_action_probs = action_probs.max(1)[0] # 選ばれた行動の確率を求める
         # print("max_action_probs : ", max_action_probs)
         return action, max_action_probs
 
@@ -133,7 +133,10 @@ class Brain:
             ratio = torch.ones(num_steps, num_processes, 1)
             pass
         else:
-            ratio = torch.div(action_probs, old_action_probs + 0.001)
+            print("action_probs : ", action_probs.squeeze())
+            print("old_actin_probs : ", old_action_probs.squeeze())
+            ratio = torch.div(action_probs, old_action_probs.detach() + 0.00001)
+            ratio = action_probs / old_action_probs
         # print("action_probs : ", action_probs)
         # print("old_action_probs : ", old_action_probs)
         # print("ratio : ", ratio)
@@ -142,11 +145,16 @@ class Brain:
 
         value_loss = advantages.pow(2).mean()
 
-        clipped_advantage = torch.where(advantages > 0, (1 + config_clip)*advantages, (1 - config_clip)*advantages)
-        clipped_loss = torch.min(ratio*advantages.detach(), clipped_advantage).mean()
-        # print("clipped_loss : ", clipped_loss)
+        clipped_ratio = torch.clip(ratio, (1 - config_clip), (1 + config_clip))
+        clipped_loss = torch.min(ratio*advantages.detach(), clipped_ratio*advantages.detach()).mean()
+        print("ratio : ", ratio.squeeze(), "\n----------------------------------------\n")
+        # print("clipped_ratio : ", clipped_ratio)
         # action_gain = (action_log_probs*advantages.detach()).mean() # これはa2cのloss
         # print("action_gain : ", action_gain)
+
+        # print("value_loss : ", value_loss_coef * value_loss)
+        # print("clipped_loss : ", clipped_loss)
+        # print("entropy : ", entropy_coef * entropy)
 
         total_loss = (value_loss * value_loss_coef - clipped_loss - entropy * entropy_coef)
 
