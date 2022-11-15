@@ -23,13 +23,7 @@ import pandas as pd
 import csv
 import datetime
 
-MAX_STEPS = 200
-NUM_EPISODES = 1000
-NUM_PROCESSES = 1
-NUM_ADVANCED_STEP = 10
-NUM_COMPLETE_EP = 8
-
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
+os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_create_avoid_object/ros2_create_avoid_object")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -37,7 +31,6 @@ JST = datetime.timezone(t_delta, "JST")
 now_JST = datetime.datetime.now(JST)
 now_time = now_JST.strftime("%Y%m%d%H%M%S")
 os.makedirs("./data_{}/weight".format(now_time))
-
 
 class Environment(Node):
     def __init__(self):
@@ -60,7 +53,8 @@ class Environment(Node):
 
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
-        self.waypoint = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
+        self.on_collision_flag = False
+        self.waypoint = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
         t_delta = datetime.timedelta(hours=9)
         JST = datetime.timezone(t_delta, "JST")
         self.now_JST = datetime.datetime.now(JST)
@@ -73,11 +67,20 @@ class Environment(Node):
     def imuCallback(self, msg):
         self.imu = msg
 
+    def current_poseCallback(self, msg):
+        self.current_pose = msg
+        self.initialpose_flag = True
+    
+    def imuCallback(self, msg):
+        self.imu = msg
+
     def closestWaypointCallback(self, msg):
         self.closest_waypoint = msg.data
 
-
     def environment_build(self):
+        # 初期化の設定
+        self.on_collision_flag = False
+
         if self.sim.current_scene == lgsvl.wise.DefaultAssets.LGSeocho:
             self.sim.reset()
         else:
@@ -89,41 +92,19 @@ class Environment(Node):
         ego = self.sim.add_agent(self.env.str("LGSVL__VEHICLE_0", lgsvl.wise.DefaultAssets.seniorcar), lgsvl.AgentType.EGO, state)
         print("state : ", state)
 
-        # controllables object setting
-        # with open("./warehouse_map_ver2.json") as f:
-        #     jsn = json.load(f)
-        #     # print("jsn : ", jsn)
-        #     for controllables in jsn["controllables"]:
-        #         state = lgsvl.ObjectState()
-        #         state.transform.position = lgsvl.Vector(controllables["transform"]["position"]["x"],
-        #                                                 controllables["transform"]["position"]["y"],
-        #                                                 controllables["transform"]["position"]["z"],)
-        #         state.transform.rotation = lgsvl.Vector(controllables["transform"]["rotation"]["x"],
-        #                                                 controllables["transform"]["rotation"]["y"],
-        #                                                 controllables["transform"]["rotation"]["z"],)
-        #         state.velocity = lgsvl.Vector(0, 0, 0)
-        #         state.angular_velocity = lgsvl.Vector(0, 0, 0)
+        obstacle_foward = lgsvl.utils.transform_to_forward(spawns[0])
+        obstacle_state = lgsvl.AgentState()
+        obstacle_state.transform.position = spawns[0].position + 8.0 * obstacle_foward
 
-        #         cone = self.sim.controllable_add(controllables["name"], state)
-            
-        #     for i, agents in enumerate(jsn["agents"]):
-        #         if i > 0:
-        #             state = lgsvl.ObjectState()
-        #             state.transform.position = lgsvl.Vector(agents["transform"]["position"]["x"],
-        #                                                     agents["transform"]["position"]["y"],
-        #                                                     agents["transform"]["position"]["z"],)
-        #             state.transform.rotation = lgsvl.Vector(agents["transform"]["rotation"]["x"],
-        #                                                     agents["transform"]["rotation"]["y"],
-        #                                                     agents["transform"]["rotation"]["z"],)
-        #             state.velocity = lgsvl.Vector(0, 0, 0)
-        #             state.angular_velocity = lgsvl.Vector(0, 0, 0)
-        #             # print("car name ]: ", agents["variant"])
-        #             npc = self.sim.add_agent(agents["variant"], lgsvl.AgentType.NPC, state=state)
+        obstacle_ego = self.sim.add_agent("Bob", lgsvl.AgentType.PEDESTRIAN, obstacle_state)
 
-        
+        self.objects = {
+            ego: "EGO",
+            obstacle_ego: "Bob",
+        }
 
-        # An EGO will not connect to a bridge unless commanded to
-        # print("Bridge connected:", ego.bridge_connected)
+        ego.on_collision(self.on_collision)
+        obstacle_ego.on_collision(self.on_collision)
 
         # The EGO is now looking for a bridge at the specified IP and port
         ego.connect_bridge(self.env.str("LGSVL__AUTOPILOT_0_HOST", lgsvl.wise.SimulatorSettings.bridge_host), self.env.int("LGSVL__AUTOPILOT_0_PORT", lgsvl.wise.SimulatorSettings.bridge_port))
@@ -142,6 +123,7 @@ class Environment(Node):
         initial_pose.pose.pose.orientation.z = -0.0179830
         initial_pose.pose.pose.orientation.w = 0.9998382918
         initial_pose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
+        # for i in range(5): # 初期値が1度だと飛ばないときがあるので5回飛ばす
         self.initialpose_pub.publish(initial_pose)
 
         # print("Bridge connected:", ego.bridge_connected)
@@ -153,7 +135,13 @@ class Environment(Node):
             step += 1
         # print("SIMULATOR is reseted !!!")
         sys.exit()
-
+    
+    def on_collision(self, agent1, agent2, contact):
+        name1 = self.objects[agent1]
+        name2 = self.objects[agent2] if agent2 is not None else "OBSTACLE"
+        print("{} collided with {} at {}".format(name1, name2, contact))
+        self.on_collision_flag = True
+    
     def init_environment(self):
         self.simulation_stop_flag = False
         self.env_thread = threading.Thread(target = self.environment_build, name = "LGSVL_Environment")
@@ -165,16 +153,22 @@ class Environment(Node):
             # print("current_pose no yet ...!")
             time.sleep(0.1)
 
+    def finish_environment(self):
+        self.simulation_stop_flag = True # シミュレータを終了させる
+        self.env_thread.join()
+
     def pandas_init(self):
         self.path_record = pd.DataFrame({"current_pose_x" : [self.current_pose.pose.position.x], "current_pose_y" : [self.current_pose.pose.position.y], "current_pose_z" : [self.current_pose.pose.position.z], 
                                     "closest_waypoint_x" : [self.waypoint[self.closest_waypoint][0]], "closest_waypoint_y" : [self.waypoint[self.closest_waypoint][1]], "closest_waypoint_z" : [self.waypoint[self.closest_waypoint][2]],
                                     "lookahead_distance" : [0], "error" : [0]})
             # print("Init path_record : \n", path_record)
+
     
     def run(self):
         episode_10_array = np.zeros(10) # 10試行分の"経路から外れない", "IMUによる蛇行がしない"step数を格納し, 平均ステップ数を出力に利用
+        complete_episodes = np.zeros(10)
 
-        complete_episodes = 0 # 連続で上手く走行した試行数
+        # complete_episodes = 0 # 連続で上手く走行した試行数
         self.closest_waypoint = 1
         episode_final = False # 最後の試行フラグ
 
@@ -188,3 +182,19 @@ class Environment(Node):
         
         episode = 0
         frame = 0
+
+        while True:
+            print("self.on_collision_flag : ", self.on_collision_flag)
+            if self.closest_waypoint > (len(self.waypoint) - 1 - 10):
+                print("reset !!!")
+                self.finish_environment()
+                time.sleep(3)
+                self.init_environment()
+            
+            if self.on_collision_flag == True:
+                print("reset !!!")
+                self.finish_environment()
+                time.sleep(3)
+                self.init_environment()
+                
+            time.sleep(0.1)
