@@ -23,6 +23,22 @@ import pandas as pd
 import csv
 import datetime
 
+MAX_STEPS = 200
+NUM_EPISODES = 1000
+NUM_PROCESSES = 1
+NUM_ADVANCED_STEP = 10
+NUM_COMPLETE_EP = 8
+
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
+print("current pose : ", os.getcwd())
+
+t_delta = datetime.timedelta(hours=9)
+JST = datetime.timezone(t_delta, "JST")
+now_JST = datetime.datetime.now(JST)
+now_time = now_JST.strftime("%Y%m%d%H%M%S")
+os.makedirs("./data_{}/weight".format(now_time))
+
+
 class Environment(Node):
     def __init__(self):
         super().__init__("rl_environment")
@@ -49,8 +65,19 @@ class Environment(Node):
         JST = datetime.timezone(t_delta, "JST")
         self.now_JST = datetime.datetime.now(JST)
         self.now_time = self.now_JST.strftime("%Y%m%d%H%M%S")
+    
+    def current_poseCallback(self, msg):
+        self.current_pose = msg
+        self.initialpose_flag = True
+    
+    def imuCallback(self, msg):
+        self.imu = msg
 
-    def envirionment_build(self):
+    def closestWaypointCallback(self, msg):
+        self.closest_waypoint = msg.data
+
+
+    def environment_build(self):
         if self.sim.current_scene == lgsvl.wise.DefaultAssets.LGSeocho:
             self.sim.reset()
         else:
@@ -60,6 +87,7 @@ class Environment(Node):
         state = lgsvl.AgentState()
         state.transform = spawns[0]
         ego = self.sim.add_agent(self.env.str("LGSVL__VEHICLE_0", lgsvl.wise.DefaultAssets.seniorcar), lgsvl.AgentType.EGO, state)
+        print("state : ", state)
 
         # controllables object setting
         # with open("./warehouse_map_ver2.json") as f:
@@ -125,3 +153,38 @@ class Environment(Node):
             step += 1
         # print("SIMULATOR is reseted !!!")
         sys.exit()
+
+    def init_environment(self):
+        self.simulation_stop_flag = False
+        self.env_thread = threading.Thread(target = self.environment_build, name = "LGSVL_Environment")
+        self.env_thread.start()
+
+        self.initialpose_flag = False
+        # current_poseが送られてきて自己位置推定が完了したと思われたら self.initalpose_flagがcurrent_pose_callbackの中でTrueになり, whileから抜ける
+        while not self.initialpose_flag:
+            # print("current_pose no yet ...!")
+            time.sleep(0.1)
+
+    def pandas_init(self):
+        self.path_record = pd.DataFrame({"current_pose_x" : [self.current_pose.pose.position.x], "current_pose_y" : [self.current_pose.pose.position.y], "current_pose_z" : [self.current_pose.pose.position.z], 
+                                    "closest_waypoint_x" : [self.waypoint[self.closest_waypoint][0]], "closest_waypoint_y" : [self.waypoint[self.closest_waypoint][1]], "closest_waypoint_z" : [self.waypoint[self.closest_waypoint][2]],
+                                    "lookahead_distance" : [0], "error" : [0]})
+            # print("Init path_record : \n", path_record)
+    
+    def run(self):
+        episode_10_array = np.zeros(10) # 10試行分の"経路から外れない", "IMUによる蛇行がしない"step数を格納し, 平均ステップ数を出力に利用
+
+        complete_episodes = 0 # 連続で上手く走行した試行数
+        self.closest_waypoint = 1
+        episode_final = False # 最後の試行フラグ
+
+        with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time), 'a') as f:
+            writer = csv.writer(f)
+            writer.writerow(["eisode", "finished_step", "10_step_meaning"])
+
+        self.pandas_init()
+
+        self.init_environment()
+        
+        episode = 0
+        frame = 0

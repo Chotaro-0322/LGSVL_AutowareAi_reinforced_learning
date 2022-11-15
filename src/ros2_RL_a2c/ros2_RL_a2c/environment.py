@@ -31,7 +31,7 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 5
 NUM_COMPLETE_EP = 10
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_a2c/ros2_RL_a2c")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_create_avoid_object/ros2_create_avoid_object")
 print("current pose : ", os.getcwd())
 
 # Python program raising

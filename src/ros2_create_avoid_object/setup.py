@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'avoid_object = ros2_create_avoid_object.main:main'
         ],
     },
 )
