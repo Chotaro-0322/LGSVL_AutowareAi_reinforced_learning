@@ -23,7 +23,7 @@ import pandas as pd
 import csv
 import datetime
 
-os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_create_avoid_object/ros2_create_avoid_object")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_create_avoid_object/ros2_create_avoid_object")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -54,7 +54,7 @@ class Environment(Node):
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
         self.on_collision_flag = False
-        self.waypoint = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
+        self.waypoint = pd.read_csv("../../../../route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
         t_delta = datetime.timedelta(hours=9)
         JST = datetime.timezone(t_delta, "JST")
         self.now_JST = datetime.datetime.now(JST)
@@ -94,9 +94,9 @@ class Environment(Node):
 
         obstacle_foward = lgsvl.utils.transform_to_forward(spawns[0])
         obstacle_state = lgsvl.AgentState()
-        obstacle_state.transform.position = spawns[0].position + 8.0 * obstacle_foward
+        obstacle_state.transform.position = spawns[0].position + 15.0 * obstacle_foward
 
-        obstacle_ego = self.sim.add_agent("Bob", lgsvl.AgentType.PEDESTRIAN, obstacle_state)
+        obstacle_ego = self.sim.add_agent("Sedan", lgsvl.AgentType.NPC, obstacle_state)
 
         self.objects = {
             ego: "EGO",
