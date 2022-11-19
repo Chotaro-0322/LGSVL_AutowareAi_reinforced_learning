@@ -23,7 +23,7 @@ import pandas as pd
 import csv
 import datetime
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_create_avoid_object/ros2_create_avoid_object")
+os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_create_avoid_object/ros2_create_avoid_object")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)

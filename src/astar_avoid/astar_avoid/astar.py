@@ -80,7 +80,7 @@ class Astar_avoid(Node):
         # print("closest waypoint is called")
 
     def run(self):
-        base_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
+        base_waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
 
         # -------------------------------
         #       ここに一度ウェイポイントを出力する項目を作成及びpublishする
@@ -118,8 +118,10 @@ class Astar_avoid(Node):
 
                 if obstacle_value > 0: # 前方に障害物があったら
                     # astarの起動!!!!
+                    pass
 
                 else: # 前方に障害物がなかったら、そのままウェイポイントを出力
-                    # base_waypointsの出力をする
+                #     # base_waypointsの出力をする
+
 
 
