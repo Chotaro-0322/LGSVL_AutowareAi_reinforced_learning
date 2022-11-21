@@ -1,4 +1,5 @@
 # system packages
+# 参考: https://blog.csdn.net/qq_35635374/article/details/124654200
 import os
 import sys
 import time
@@ -50,6 +51,7 @@ class Astar_avoid(Node):
         self.ndt_pose_subscriber = self.create_subscription(PoseStamped, "ndt_pose", self.ndtPoseCallback, 1)
         
         self.waypoint_publisher = self.create_publisher(Float32MultiArray, "route_waypoints_multiarray", 1)
+        self.base_waypoint_publisher = self.create_publisher(Float32MultiArray, "base_route_waypoints_multiarray", 1)
         self.closest_waypoint_publisher = self.create_publisher(Int32, "closest_waypoint", 1)
 
     def pointcloudCallback(self, msg):
@@ -79,6 +81,20 @@ class Astar_avoid(Node):
         #       ここに一度ウェイポイントを出力する項目を作成及びpublishする
         #--------------------------------
         while True:
+            multiarray = Float32MultiArray()
+            multiarray.layout.dim.append(MultiArrayDimension())
+            multiarray.layout.dim.append(MultiArrayDimension())
+            multiarray.layout.dim[0].label = "height"
+            multiarray.layout.dim[1].label = "width"
+            multiarray.layout.dim[0].size = waypoints.shape[0]
+            multiarray.layout.dim[1].size = waypoints.shape[1]
+            multiarray.layout.dim[0].stride = waypoints.shape[0] * waypoints.shape[1]
+            multiarray.layout.dim[1].stride = waypoints.shape[1]
+            multiarray.data = waypoints.reshape(1, -1)[0].tolist()
+
+            self.base_waypoint_publisher.publish(multiarray)
+            time.sleep(0.5)
+
             # gridmapが来るまで待機
             while True: 
                 if len(list(self.gridmap)) != 0: # Gridmapがsubscribeされたら
@@ -113,7 +129,7 @@ class Astar_avoid(Node):
 
                 '''----計算されたグリッドマップ周辺に障害物がないか計算----'''
                 # マス周辺5マス分の障害物の値を得る(obstacle_value > 0のときに前方に障害物あり)
-                obstacle_value += np.sum(self.gridmap[nearest_grid_space[0]-10 : nearest_grid_space[0]+10, nearest_grid_space[1]-10 : nearest_grid_space[1]+10, 2])
+                obstacle_value += np.sum(self.gridmap[nearest_grid_space[0]-3 : nearest_grid_space[0]+3, nearest_grid_space[1]-3 : nearest_grid_space[1]+3, 2])
                 print("waypoints_number : ", self.num_closest_waypoint + i, "| 障害物の値 : ", obstacle_value)
 
                 if i == 0: # closest_waypointのときは自車のいるgridマスとして保存しておく(あとで回避時のスタート地点として使用)
@@ -139,8 +155,9 @@ class Astar_avoid(Node):
                 # print("goal point : ", goal_position)
                 goal_flag, output_route = self.Potential_avoid.calculation(vehicle_position, goal_position, self.gridmap, yaw, velocity, change_flag)
                 
-                # result_route = np.concatenate([waypoints[:self.vehicle_closest_waypoint], output_route, waypoints[self.goal_closest_waypoint:]])
                 result_route = np.concatenate([waypoints[:self.vehicle_closest_waypoint], output_route])
+                #result_route = np.concatenate([waypoints[:self.vehicle_closest_waypoint], output_route])
+                # result_route = output_route
                 np.savetxt('./base_waypoints.csv', waypoints, delimiter=",")
                 np.savetxt('./avoid_waypoints.csv', result_route, delimiter=",")
                 # input()
@@ -148,50 +165,32 @@ class Astar_avoid(Node):
                 print("goal waypoint : ", self.goal_closest_waypoint)
                 print("all_of_waypoint : ", waypoints.shape[0])
                 print("result waypoint shape : ", result_route.shape)
+            
                 if goal_flag == True:
+                    # closest_waypointを探索
+                    error2waypoint = np.sum(np.abs(result_route[:, :2] - self.current_pose), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
+                    # print("error2waypoint : ", error2waypoint)
+                    closest_waypoint = error2waypoint.argmin()
+                    print("closest_waypoint : ", closest_waypoint)
+                    # closest_waypoint_msg = Int32()
+                    # closest_waypoint_msg.data = int(closest_waypoint)
+                    # self.closest_waypoint_publisher.publish(closest_waypoint_msg)
+                    # print("closest_waypoint : ", closest_waypoint)]
+                    publish_route = result_route[closest_waypoint:]
                     multiarray = Float32MultiArray()
                     multiarray.layout.dim.append(MultiArrayDimension())
                     multiarray.layout.dim.append(MultiArrayDimension())
                     multiarray.layout.dim[0].label = "height"
                     multiarray.layout.dim[1].label = "width"
-                    multiarray.layout.dim[0].size = result_route.shape[0]
-                    multiarray.layout.dim[1].size = result_route.shape[1]
-                    multiarray.layout.dim[0].stride = result_route.shape[0] * result_route.shape[1]
-                    multiarray.layout.dim[1].stride = result_route.shape[1]
-                    multiarray.data = result_route.reshape(1, -1)[0].tolist()
-            #     else:
-            #         multiarray = Float32MultiArray()
-            #         multiarray.layout.dim.append(MultiArrayDimension())
-            #         multiarray.layout.dim.append(MultiArrayDimension())
-            #         multiarray.layout.dim[0].label = "height"
-            #         multiarray.layout.dim[1].label = "width"
-            #         multiarray.layout.dim[0].size = waypoints.shape[0]
-            #         multiarray.layout.dim[1].size = waypoints.shape[1]
-            #         multiarray.layout.dim[0].stride = waypoints.shape[0] * waypoints.shape[1]
-            #         multiarray.layout.dim[1].stride = waypoints.shape[1]
-            #         multiarray.data = waypoints.reshape(1, -1)[0].tolist()
-
+                    multiarray.layout.dim[0].size = publish_route.shape[0]
+                    multiarray.layout.dim[1].size = publish_route.shape[1]
+                    multiarray.layout.dim[0].stride = publish_route.shape[0] * publish_route.shape[1]
+                    multiarray.layout.dim[1].stride = publish_route.shape[1]
+                    multiarray.data = publish_route.reshape(1, -1)[0].tolist()
                     self.waypoint_publisher.publish(multiarray)
                     
+                waypoints = result_route
+                    
 
-            #     waypoints = result_route
-            #     time.sleep(0.5)
-
-            else: # 前方に障害物がなかったら、そのままウェイポイントを出力(Vehicle_cmd_filter.pyに送られ、そこでfinal_waypointsとしてpublishされる。)
-                    # なぜfinal_waypointsとして直接publishしないのかというと、ROS1_bridgeはautoware_msgにデフォルトで対応していないので、ros2内でautoware.aiのautoware_msgs.msg Laneが使えないことが理由
-                # base_waypointsの出力をする
-                multiarray = Float32MultiArray()
-                multiarray.layout.dim.append(MultiArrayDimension())
-                multiarray.layout.dim.append(MultiArrayDimension())
-                multiarray.layout.dim[0].label = "height"
-                multiarray.layout.dim[1].label = "width"
-                multiarray.layout.dim[0].size = waypoints.shape[0]
-                multiarray.layout.dim[1].size = waypoints.shape[1]
-                multiarray.layout.dim[0].stride = waypoints.shape[0] * waypoints.shape[1]
-                multiarray.layout.dim[1].stride = waypoints.shape[1]
-                multiarray.data = waypoints.reshape(1, -1)[0].tolist()
-
-                self.waypoint_publisher.publish(multiarray)
-                time.sleep(0.5)
-
+    
 
