@@ -4,11 +4,11 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 from collections import namedtuple
-from torch.distributions import Normal
 
 import numpy as np
 
 BATCH_SIZE = 32
+NUM_STACK_FRAME = 4
 CAPACITY = 10000
 GAMMA = 0.99
 
@@ -24,24 +24,14 @@ config_clip = 0.2
 
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
 
-def compute_pi(mean, stddev, actions):
-    stddev = stddev ** 2
-    a1 = (2 * np.pi * stddev) ** (-1/2)
-    a2 = torch.exp(-((actions - mean) ** 2) / (2 * stddev))
-    return a1 * a2
-
-def compute_logpi(mean, stddev, action):
-    a1 = -0.5 * np.log(2*np.pi)
-    a2 = -torch.log(stddev)
-    a3 = -0.5 * (((action - mean) / stddev) ** 2)
-    return a1 + a2 + a3
-
 class RolloutStorage:
     def __init__(self, num_steps, num_processes, obs_shape):
-        self.observations = torch.zeros(num_steps + 1, num_processes, obs_shape)
-        self.masks = torch.ones(num_steps + 1, num_processes, 1)
-        self.rewards = torch.zeros(num_steps, num_processes, 1)
-        self.actions = torch.zeros(num_steps, num_processes, 1).long()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.observations = torch.zeros(num_steps + 1, num_processes, obs_shape[2], obs_shape[0], obs_shape[1]).to(self.device)
+        self.masks = torch.ones(num_steps + 1, num_processes, 1).to(self.device)
+        self.rewards = torch.zeros(num_steps, num_processes, 1).to(self.device)
+        self.actions = torch.zeros(num_steps, num_processes, 1).long().to(self.device)
 
         self.returns = torch.zeros(num_steps + 1, num_processes, 1)
         self.index = 0
@@ -133,13 +123,56 @@ class Critic(nn.Module):
         value = self(x)
         return value
 
+class Discriminator(nn.Module):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+        self.conv2d_1 = nn.Conv2d(3, 64, 2, stride=2)
+        self.conv2d_2 = nn.Conv2d(64, 128, 2, stride=2)
+        self.conv2d_3 = nn.Conv2d(128, 256, 2, stride=2)
+        self.conv2d_4 = nn.Conv2d(256, 512, 2, stride=2)
+        self.conv2d_5 = nn.Conv2d(512, 1, 1, stride=1) # ボルトネック層
+
+        self.batch_norm_1 = nn.InstanceNorm2d(64)
+        self.batch_norm_2 = nn.InstanceNorm2d(128)
+        self.batch_norm_3 = nn.InstanceNorm2d(256)
+        self.batch_norm_4 = nn.InstanceNorm2d(512)
+
+        self.activation = nn.LeakyReLU(0.01)
+        self.dropout = nn.Dropout(0.5)
+        self.softmax = nn.Softmax(dim = 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, input):
+        x = self.conv2d_1(input)
+        x = self.activation(x)
+        x = self.batch_norm_1(x)
+
+        x = self.conv2d_2(x)
+        x = self.activation(x)
+        x = self.batch_norm_2(x)
+
+        x = self.conv2d_3(x)
+        x = self.activation(x)
+        x = self.batch_norm_3(x)
+
+        x = self.conv2d_4(x)
+        x = self.activation(x)
+        x = self.batch_norm_4(x)
+
+        x = self.conv2d_5(x)
+        
+        return x
+
 class Brain:
-    def __init__(self, actor, critic):
+    def __init__(self, actor, critic, discriminator):
         self.actor = actor
         self.actor = self.init_weight(self.actor)
 
         self.critic = critic
         self.critic = self.init_weight(self.critic)
+
+        self.discriminator = discriminator
+        self.discriminator = self.init_weight(self.discriminator)
 
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=0.01)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=0.01)
@@ -149,25 +182,31 @@ class Brain:
             nn.init.kaming_uniform_(net.weight.data)
             if net.bias is not None:
                 nn.init.constant_(net.bias, 0.0)
+        if isinstance(net, nn.Conv2d):
+            nn.init.kaming_uniform_(net.weight.data)
+            if net.bias is not None:
+                nn.init.constant_(net.bias, 0.0)
         return net
     
-    def update(self, rollouts, old_action_probs, first_episode=False): # first_episode==Trueのとき、それは最初の試行であり、self.old_r_thera = torch.tensor([1, 1, 1, 1, 1...])を使う
+    def actorcritic_update(self, rollouts, old_action_probs, first_episode=False): # first_episode==Trueのとき、それは最初の試行であり、self.old_r_thera = torch.tensor([1, 1, 1, 1, 1...])を使う
         obs_shape = rollouts.observations.size()[2]
         # print("obs_shape : ", obs_shape)
         num_steps = NUM_ADVANCED_STEP
         num_processes = NUM_PROCESSES
 
-        entropy, action_probs = self.actor.evaluate_actions(rollouts.observations[:-1].view(-1, obs_shape), rollouts.actions.view(-1, 1))
+        entropy, action_probs = self.actor_critic.evaluate_actions(rollouts.observations[:-1].view(-1, obs_shape), rollouts.actions.view(-1, 1))
         values = self.critic.get_value(rollouts.observations[:-1].view(-1, obs_shape))
 
         values = values.view(num_steps, num_processes, 1) # torch.Size([5, 1, 1])
+        action_log_probs = action_log_probs.view(num_steps, num_processes, 1)
         action_probs = action_probs.view(num_steps, num_processes, 1)
+        # print("action_log_probs : ", action_probs.size())
         if first_episode == True:
             ratio = torch.ones(num_steps, num_processes, 1)
             pass
         else:
-            # print("action_probs : ", action_probs.squeeze())
-            # print("old_actin_probs : ", old_action_probs.squeeze())
+            print("action_probs : ", action_probs.squeeze())
+            print("old_actin_probs : ", old_action_probs.squeeze())
             ratio = torch.div(action_probs, old_action_probs.detach() + 0.00001)
             ratio = action_probs / old_action_probs
 
@@ -178,10 +217,6 @@ class Brain:
         clipped_ratio = torch.clip(ratio, (1 - config_clip), (1 + config_clip))
         clipped_loss = torch.min(ratio*advantages.detach(), clipped_ratio*advantages.detach()).mean()
 
-        print("clipped_loss : ", clipped_loss)
-        print("value_loss : ", value_loss * value_loss_coef)
-        print("entropy_loss : ", entropy * entropy_coef)
-
         total_loss = (value_loss * value_loss_coef - clipped_loss - entropy * entropy_coef)
 
         self.actor.train()
@@ -191,3 +226,26 @@ class Brain:
         total_loss.backward()
         self.actor_optimizer.step()
         self.critic_optimizer.step()
+
+        self.actorcritic_optimizer.step()
+    
+    def discriminator_update(self, ppo_route, expert_route):
+        # ---- 識別器の学習----
+        real_label =  torch.ones(ppo_route.size()[0], 1, 16, 16).to(self.device)# img.size()[0]はバッチサイズのこと
+        fake_label = torch.zeros(expert_route.size()[0], 1, 16, 16).to(self.device)
+
+        # 識別器を用いて真偽を出力("生成された経路" と "用意した人間のデータ" を識別機に入力して結果を得る)
+        fake_outputs = self.discriminator(ppo_route)
+        real_outputs = self.discriminator(expert_route)
+
+        # 識別器の入力を結合　また、 教師データとなる "偽物なら0の行列"と"本物なら1の行列"を結合
+        authenticity_outputs = torch.cat((fake_outputs, real_outputs), 0)
+        authenticity_targets = torch.cat((fake_label, real_label), 0)
+
+        # バックプロパゲーション
+        mse_loss = nn.MSELoss()
+        loss = mse_loss(authenticity_outputs, authenticity_targets) / 0.5
+        self.discriminator.zero_grad()
+        loss.backward()
+        self.discriminator.step()
+

@@ -13,7 +13,7 @@ from visualization_msgs.msg import MarkerArray
 from environs import Env
 import lgsvl
 
-from .brain import Actor, Critic, Brain, RolloutStorage
+from .brain import Net, Brain, RolloutStorage
 
 import numpy as np
 import torch
@@ -31,7 +31,7 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 10
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ppo/ros2_RL_ppo")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -68,19 +68,16 @@ class Environment(Node):
 
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
-        self.waypoint = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
+        self.waypoint = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
         # print("waypoint : \n", self.waypoint)
         # print("GPU is : ", torch.cuda.is_available())
 
         self.n_in = 1 # 状態
-        self.n_out = 1 #行動
+        self.n_out = 2 #行動
         self.n_mid = 32
-        self.actor_hight = torch.tensor([5.0])
-        self.actor_low = torch.tensor([1.5])
-        self.actor = Actor(self.n_in, self.n_mid, self.n_out, self.actor_hight, self.actor_low)
-        self.critic = Critic(self.n_in, self.n_mid, self.n_out)
+        self.actor_critic = Net(self.n_in, self.n_mid, self.n_out)
 
-        self.global_brain = Brain(self.actor, self.critic)
+        self.global_brain = Brain(self.actor_critic)
 
         #格納用の変数の生成
         self.obs_shape = self.n_in
@@ -170,6 +167,8 @@ class Environment(Node):
         initial_pose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
         self.initialpose_pub.publish(initial_pose)
 
+        # print("Bridge connected:", ego.bridge_connected)
+        # print("Running the simulation")
         step = 0
         while not self.simulation_stop_flag: # simulation_stop_flagがFalseのときは実行し続ける
             # print("Runing !!!! step : ", step)
@@ -185,6 +184,10 @@ class Environment(Node):
         waypoint_pose = self.waypoint[self.closest_waypoint, 0:3]
 
         error_dist = np.sqrt(np.sum(np.square(waypoint_pose - current_pose)))
+
+        # print("current_pose : \n", current_pose)
+        # print("waypoint_pose : \n", waypoint_pose)
+        # print("pose_difference : ", error_dist)
 
         done = False
         if error_dist > 1.0:
@@ -249,15 +252,15 @@ class Environment(Node):
             # while self.closest_waypoint < (len(self.waypoint) - 1 - 5) and self.simulation_stop_flag == False: # 1エピソードのループ ※len(waypoint)はwaypointの総数だが, 0インデックスを考慮して -1 その次に 経路の終わりから3つ前までという意味で -3
                 # print("state : ", state)
                 with torch.no_grad():
-                    action, tmp_action_probs[step] = self.actor.act(self.rollouts.observations[step])
-                action_array = action.numpy()
-                print("action : ", action_array[0])
-                print("tmp_action_probs[step] : ", tmp_action_probs[step])
+                    action, tmp_action_probs[step] = self.actor_critic.act(self.rollouts.observations[step])
+                actions = action.squeeze(1).numpy()
                 
                 # action(purepursuit or 無限遠点)をパブリッシュしてpure pursuit本体に送る
                 self.lookahead_dist = Float32()
-                self.lookahead_dist.data = float(action_array[0])
-
+                if action == 0:
+                    self.lookahead_dist.data = 0.5
+                else:
+                    self.lookahead_dist.data = 5.0
                 self.lookahead_pub.publish(self.lookahead_dist)
 
                 time.sleep(1) # １秒後の情報を得るために1秒のインターバル
@@ -283,13 +286,12 @@ class Environment(Node):
                         episode_10_array[episode % 10] = frame
                         
                         if episode % 10 == 0: # 10episodeごとにウェイトを保存
-                            torch.save(self.global_brain.actor, "./data_{}/weight/episode_{}_actor_finish.pth".format(now_time, episode))
-                            torch.save(self.global_brain.critic, "./data_{}/weight/episode_{}_critic_finish.pth".format(now_time, episode))
+                            torch.save(self.global_brain.actor_critic, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
 
                         if i == 0: # 分散処理の最初の項が終了した場合、結果を記録
                             self.finish_environment()
                             print("%d Episode: Finished after %d frame : 10試行の平均frame数 = %.1lf" %(episode, frame, episode_10_array.mean()))
-                            with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time).format(), 'a') as f:
+                            with open('data/episode_mean10_{}.csv'.format(now_time).format(), 'a') as f:
                                 writer = csv.writer(f)
                                 writer.writerow([episode, frame, episode_10_array.mean()])
                             episode += 1
@@ -352,7 +354,7 @@ class Environment(Node):
             # advancedのfor文　loop終了
 
             with torch.no_grad():
-                next_value = self.critic.get_value(self.rollouts.observations[-1].detach())
+                next_value = self.actor_critic.get_value(self.rollouts.observations[-1].detach())
             
             self.rollouts.compute_returns(next_value)
 
@@ -377,8 +379,3 @@ class Environment(Node):
             
             
             
-
-
-
-
-

@@ -4,16 +4,20 @@ import sys
 import rclpy
 from rclpy.node import Node
 from rclpy.clock import Clock
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Pose
 from geometry_msgs.msg import PoseWithCovarianceStamped
-from sensor_msgs.msg import Imu
-from std_msgs.msg import Float32, Int32
+from sensor_msgs.msg import Imu, PointCloud2
+from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import Float32, Int32, Float32MultiArray, MultiArrayDimension
 from visualization_msgs.msg import MarkerArray
 
 from environs import Env
 import lgsvl
 
-from .brain import Actor, Critic, Brain, RolloutStorage
+from .brain import ActorCritic, Discriminator, Brain, RolloutStorage
+from .potential_f import Potential_avoid
+from .ros2_numpy.ros2_numpy.point_cloud2 import pointcloud2_to_array
+from .ros2_numpy.ros2_numpy.occupancy_grid import occupancygrid_to_numpy
 
 import numpy as np
 import torch
@@ -31,7 +35,7 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 10
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ppo/ros2_RL_ppo")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -47,6 +51,7 @@ os.makedirs("./data_{}/weight".format(now_time))
 class Environment(Node):
     def __init__(self):
         super().__init__("rl_environment")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         # 環境の準備
         self.env = Env() 
         self.sim = lgsvl.Simulator(self.env.str("LGSVL__SIMULATOR_HOST", lgsvl.wise.SimulatorSettings.simulator_host), self.env.int("LGSVL__SIMULATOR_PORT", lgsvl.wise.SimulatorSettings.simulator_port))
@@ -59,7 +64,7 @@ class Environment(Node):
         self.imu = Imu()
         self.closest_waypoint = Int32()
 
-        self.current_pose_sub = self.create_subscription(PoseStamped, "current_pose", self.current_poseCallback, 1)
+        # self.current_pose_sub = self.create_subscription(PoseStamped, "current_pose", self.current_poseCallback, 1)
         self.imu_sub = self.create_subscription(Imu, "imu_raw",  self.imuCallback, 1)
         self.closest_waypoint_sub = self.create_subscription(Int32, "closest_waypoint", self.closestWaypointCallback, 1)
 
@@ -68,43 +73,86 @@ class Environment(Node):
 
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
-        self.waypoint = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
+        self.waypoint = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
         # print("waypoint : \n", self.waypoint)
         # print("GPU is : ", torch.cuda.is_available())
 
-        self.n_in = 1 # 状態
-        self.n_out = 1 #行動
-        self.n_mid = 32
-        self.actor_hight = torch.tensor([5.0])
-        self.actor_low = torch.tensor([1.5])
-        self.actor = Actor(self.n_in, self.n_mid, self.n_out, self.actor_hight, self.actor_low)
-        self.critic = Critic(self.n_in, self.n_mid, self.n_out)
+        self.n_out = 2 #行動
+        self.actor_critic = ActorCritic(self.n_out).to(self.device)
+        self.discriminator = Discriminator().to(self.device)
 
-        self.global_brain = Brain(self.actor, self.critic)
+        self.global_brain = Brain(self.actor_critic, self.discriminator)
 
         #格納用の変数の生成
-        self.obs_shape = self.n_in
+        self.obs_shape = [125, 125, 3]
         # print("self.obs_shape : ", self.obs_shape)
-        self.current_obs = torch.zeros(NUM_PROCESSES, self.obs_shape) # torch size ([16, 4])
+        self.current_obs = torch.zeros(NUM_PROCESSES, self.obs_shape[0], self.obs_shape[1], self.obs_shape[2]) # torch size ([16, 4])
         self.rollouts = RolloutStorage(NUM_ADVANCED_STEP, NUM_PROCESSES, self.obs_shape)
         self.episode_rewards = torch.zeros([NUM_PROCESSES, 1]) # 現在の施行の報酬を保持
         self.final_rewards = torch.zeros([NUM_PROCESSES, 1]) # 最後の施行の報酬を保持
         self.old_action_probs = torch.zeros([NUM_ADVANCED_STEP, NUM_PROCESSES, 1]) # ratioの計算のため
-        self.obs_np = np.zeros([NUM_PROCESSES, self.obs_shape]) 
+        self.obs_np = np.zeros([NUM_PROCESSES, self.obs_shape[0], self.obs_shape[1], self.obs_shape[2]]) 
         self.reward_np = np.zeros([NUM_PROCESSES, 1])
         self.done_np = np.zeros([NUM_PROCESSES, 1])
         self.each_step = np.zeros(NUM_PROCESSES) # 各環境のstep数を記録
         self.episode = 0 # 環境0の施行数
 
-    def current_poseCallback(self, msg):
-        self.current_pose = msg
-        self.initialpose_flag = True
+        # ポテンシャル法の部分
+        self.Potential_avoid = Potential_avoid(delt=0.5, speed=0.5, weight_obst=0.1, weight_goal=10)
+
+        self.pcd_as_numpy_array = np.zeros((0))
+        self.gridmap_as_numpy_array = np.zeros((0))
+        self.current_pose = np.zeros((2))
+        self.num_closest_waypoint = 0
+        self.gridmap = np.zeros((0))
+        self.grid_resolution = 0
+        self.grid_width = 0
+        self.grid_height = 0
+        self.grid_position = Pose()
+        self.vehicle_grid = np.zeros((2))
+        self.goal_grid = np.zeros((2))
+
+        self.length_judge_obstacle = 10 # この数字分, 先のwaypointを使って障害物を判断
+
+        self.pcd_subscriber = self.create_subscription(PointCloud2, "clipped_cloud", self.pointcloudCallback, 1)
+        self.costmap_subscriber = self.create_subscription(OccupancyGrid, "/semantics/costmap_generator/occupancy_grid", self.costmapCallback, 1)
+        self.ndt_pose_subscriber = self.create_subscription(PoseStamped, "ndt_pose", self.ndtPoseCallback, 1)
+        
+        self.waypoint_publisher = self.create_publisher(Float32MultiArray, "route_waypoints_multiarray", 1)
+        self.base_waypoint_publisher = self.create_publisher(Float32MultiArray, "base_route_waypoints_multiarray", 1)
+        self.closest_waypoint_publisher = self.create_publisher(Int32, "closest_waypoint", 1)
+
+    # def current_poseCallback(self, msg):
+    #     self.current_pose = msg
+    #     self.initialpose_flag = True
     
     def imuCallback(self, msg):
         self.imu = msg
 
     def closestWaypointCallback(self, msg):
         self.closest_waypoint = msg.data
+    
+    def pointcloudCallback(self, msg):
+        self.pcd_as_numpy_array = pointcloud2_to_array(msg)
+
+    def costmapCallback(self, msg):
+        self.grid_resolution = msg.info.resolution
+        self.grid_width = msg.info.width
+        self.grid_height = msg.info.height
+        self.grid_position = msg.info.origin
+        self.gridmap_as_numpy_array = occupancygrid_to_numpy(msg)[:, :, np.newaxis] # あとで座標情報とくっつけるために次元を増やしておく
+
+        self.grid_coordinate_array = np.zeros((self.grid_height, self.grid_width, 2))
+        for i in range(self.grid_width): # /mapの座標を設定 : x軸
+            self.grid_coordinate_array[:, i, 1] = self.grid_position.position.x + i * self.grid_resolution
+        for i in range(self.grid_height): # /mapの座標を設定 : y軸
+            self.grid_coordinate_array[i, :, 0] = self.grid_position.position.y + i * self.grid_resolution
+
+        self.gridmap = np.block([self.grid_coordinate_array, self.gridmap_as_numpy_array])
+
+    def ndtPoseCallback(self, msg):
+        self.current_pose = np.array([msg.pose.position.x, msg.pose.position.y])
+        self.initialpose_flag = True
 
     def environment_build(self):
         if self.sim.current_scene == lgsvl.wise.DefaultAssets.LGSeocho:
@@ -170,6 +218,8 @@ class Environment(Node):
         initial_pose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
         self.initialpose_pub.publish(initial_pose)
 
+        # print("Bridge connected:", ego.bridge_connected)
+        # print("Running the simulation")
         step = 0
         while not self.simulation_stop_flag: # simulation_stop_flagがFalseのときは実行し続ける
             # print("Runing !!!! step : ", step)
@@ -179,9 +229,9 @@ class Environment(Node):
         sys.exit()
 
     def check_error(self):
-        current_pose = np.array([self.current_pose.pose.position.x, 
-                          self.current_pose.pose.position.y, 
-                          self.current_pose.pose.position.z])
+        current_pose = np.array([self.current_pose[0], 
+                          self.current_pose[1], 
+                          0])
         waypoint_pose = self.waypoint[self.closest_waypoint, 0:3]
 
         error_dist = np.sqrt(np.sum(np.square(waypoint_pose - current_pose)))
@@ -202,7 +252,7 @@ class Environment(Node):
         self.initialpose_flag = False
         # current_poseが送られてきて自己位置推定が完了したと思われたら self.initalpose_flagがcurrent_pose_callbackの中でTrueになり, whileから抜ける
         while not self.initialpose_flag:
-            # print("current_pose no yet ...!")
+            print("current_pose no yet ...!")
             time.sleep(0.1)
 
     def finish_environment(self):
@@ -210,7 +260,7 @@ class Environment(Node):
         self.env_thread.join()
 
     def pandas_init(self):
-        self.path_record = pd.DataFrame({"current_pose_x" : [self.current_pose.pose.position.x], "current_pose_y" : [self.current_pose.pose.position.y], "current_pose_z" : [self.current_pose.pose.position.z], 
+        self.path_record = pd.DataFrame({"current_pose_x" : [self.current_pose[0]], "current_pose_y" : [self.current_pose[1]], "current_pose_z" : [0], 
                                     "closest_waypoint_x" : [self.waypoint[self.closest_waypoint][0]], "closest_waypoint_y" : [self.waypoint[self.closest_waypoint][1]], "closest_waypoint_z" : [self.waypoint[self.closest_waypoint][2]],
                                     "lookahead_distance" : [0], "error" : [0]})
             # print("Init path_record : \n", path_record)
@@ -232,11 +282,12 @@ class Environment(Node):
 
         self.init_environment()
         
+        self.rollouts.observations[0] = torch.from_numpy(self.gridmap.transpose(2, 0, 1))
         episode = 0
         frame = 0
         for j in range(NUM_EPISODES * NUM_PROCESSES):
 
-            pose_state = self.current_pose.pose
+            pose_state = self.current_pose
             imu_state = self.imu.linear_acceleration # 要調整
                         
             state = np.array([self.check_error()[0]]) #誤差を状態として学習させたい
@@ -245,20 +296,12 @@ class Environment(Node):
             state = torch.unsqueeze(state, 0)
 
             tmp_action_probs = torch.zeros([NUM_ADVANCED_STEP, NUM_PROCESSES, 1])
-            for step in range(NUM_ADVANCED_STEP):
-            # while self.closest_waypoint < (len(self.waypoint) - 1 - 5) and self.simulation_stop_flag == False: # 1エピソードのループ ※len(waypoint)はwaypointの総数だが, 0インデックスを考慮して -1 その次に 経路の終わりから3つ前までという意味で -3
-                # print("state : ", state)
-                with torch.no_grad():
-                    action, tmp_action_probs[step] = self.actor.act(self.rollouts.observations[step])
-                action_array = action.numpy()
-                print("action : ", action_array[0])
-                print("tmp_action_probs[step] : ", tmp_action_probs[step])
-                
-                # action(purepursuit or 無限遠点)をパブリッシュしてpure pursuit本体に送る
-                self.lookahead_dist = Float32()
-                self.lookahead_dist.data = float(action_array[0])
+            
 
-                self.lookahead_pub.publish(self.lookahead_dist)
+            for step in range(NUM_ADVANCED_STEP):
+                with torch.no_grad():
+                    action, tmp_action_probs[step] = self.actor_critic.act(self.rollouts.observations[step])
+                actions = action.squeeze(1).numpy()
 
                 time.sleep(1) # １秒後の情報を得るために1秒のインターバル
                 
@@ -283,13 +326,12 @@ class Environment(Node):
                         episode_10_array[episode % 10] = frame
                         
                         if episode % 10 == 0: # 10episodeごとにウェイトを保存
-                            torch.save(self.global_brain.actor, "./data_{}/weight/episode_{}_actor_finish.pth".format(now_time, episode))
-                            torch.save(self.global_brain.critic, "./data_{}/weight/episode_{}_critic_finish.pth".format(now_time, episode))
+                            torch.save(self.global_brain.actor_critic, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
 
                         if i == 0: # 分散処理の最初の項が終了した場合、結果を記録
                             self.finish_environment()
                             print("%d Episode: Finished after %d frame : 10試行の平均frame数 = %.1lf" %(episode, frame, episode_10_array.mean()))
-                            with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time).format(), 'a') as f:
+                            with open('data/episode_mean10_{}.csv'.format(now_time).format(), 'a') as f:
                                 writer = csv.writer(f)
                                 writer.writerow([episode, frame, episode_10_array.mean()])
                             episode += 1
@@ -352,7 +394,7 @@ class Environment(Node):
             # advancedのfor文　loop終了
 
             with torch.no_grad():
-                next_value = self.critic.get_value(self.rollouts.observations[-1].detach())
+                next_value = self.actor_critic.get_value(self.rollouts.observations[-1].detach())
             
             self.rollouts.compute_returns(next_value)
 

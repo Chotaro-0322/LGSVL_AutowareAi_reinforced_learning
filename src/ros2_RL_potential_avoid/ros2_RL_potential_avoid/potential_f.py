@@ -1,10 +1,5 @@
 import math
 import numpy as np
-import matplotlib.pyplot as plt
-
-from threading import Thread
-import tkinter as tk
-
 
 class Potential_avoid():
     """https://qiita.com/koichi_baseball/items/0a6eef85be8d700f6125を参考"""
@@ -94,6 +89,3 @@ class Potential_avoid():
             if count > 1000:
                 print("count over !!!")
                 return False, output_route
-
-        
-        
