@@ -417,17 +417,28 @@ class Environment(Node):
             expert_route_grid_value[nearest_grid_space[0], nearest_grid_space[1]] = 1
             # print("self.vehicle_grid : ", self.vehicle_grid)
 
-        
+        # 生成されたresult_routeを識別器にかける
+        generated_route_grid_value = generated_route_grid_value[:, :, np.newaxis]
+        generated_route_grid_value = torch.from_numpy(generated_route_grid_value.transpose(2, 0, 1)).to(self.device)
+        discriminator_output = self.discriminator(generated_route_grid_value).detach()
 
+        # "生成されたresult_route", "エキスパート経路"を使って識別器を学習させる
+        expert_route_grid_value = expert_route_grid_value[:, :, np.newaxis]
+        expert_route_grid_value = torch.from_numpy(expert_route_grid_value.transpose(2, 0, 1)).to(self.device)
+        self.global_brain.discriminator_update(discriminator_output, expert_route_grid_value)
+
+        # 報酬の設定
         dist_vehicle2goal = np.linalg.norm(goal_position - vehicle_position)
-
+        discriminator_output = discriminator_output.squeeze().detach().cpu().numpy()
         reward = 0
         done = False
-        if goal_flag is not True:
+        if goal_flag is not True: # ゴールできないような経路を作成してしまった場合
             done = True
             reward = -1
-        if dist_vehicle2goal < 1.0:
+        if dist_vehicle2goal < 1.0: # ゴールに到達できた場合
             done = True
+            reward = 1
+        if np.round(discriminator_output) == 1: # 識別器によって、生成されたrouteが人っぽいと判断された場合
             reward = 1
 
         return reward, done

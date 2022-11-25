@@ -144,7 +144,7 @@ class Critic(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
-        self.conv2d_1 = nn.Conv2d(3, 64, 2, stride=2)
+        self.conv2d_1 = nn.Conv2d(1, 64, 2, stride=2)
         self.conv2d_2 = nn.Conv2d(64, 128, 2, stride=2)
         self.conv2d_3 = nn.Conv2d(128, 256, 2, stride=2)
         self.conv2d_4 = nn.Conv2d(256, 512, 2, stride=2)
