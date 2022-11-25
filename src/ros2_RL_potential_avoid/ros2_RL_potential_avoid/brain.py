@@ -56,24 +56,33 @@ class RolloutStorage:
 class Actor(nn.Module):
     def __init__(self, n_in, n_mid, n_out, action_space_high, action_space_low):
         super(Actor, self).__init__()
-        self.fc1 = nn.Linear(n_in, n_mid)
-        self.fc2 = nn.Linear(n_mid, n_mid)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.conv2d_1 = nn.Conv2d(1, 32, kernel_size=8, stride=4)
+        self.conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+
+        self.fc = nn.Linear(64 * 9 * 9, 512)
 
         # Actor
-        self.pi_mean = nn.Linear(n_mid, n_out) # Advantage側
-        self.stddev = nn.Linear(n_mid, n_out)
+        self.pi_mean = nn.Linear(512, n_out) # Advantage側
+        self.stddev = nn.Linear(512, n_out)
 
-        self.action_centor = (action_space_high + action_space_low)/2
-        self.action_scale = action_space_high - self.action_centor
+        self.action_center = (action_space_high + action_space_low)/2
+        self.action_scale = action_space_high - self.action_center
+
 
     def forward(self, x):
         # print("x: shape : ", x.size())
-        h1 = F.relu(self.fc1(x))
-        h2 = F.relu(self.fc2(h1))
-
-        mean_output = self.pi_mean(h2)
+        x = F.relu(self.conv2d_1(x))
+        x = F.relu(self.conv2d_2(x))
+        x = F.relu(self.conv2d_3(x))
+        # print("x size : ", x.size())
+        x = x.view(1, -1)
+        # print("x size flatten : ", x.size())
+        x = F.relu(self.fc(x))
+        mean_output = self.pi_mean(x)
         
-        stddev_output = self.stddev(h2)
+        stddev_output = self.stddev(x)
         stddev_output = torch.clamp(stddev_output, min=-20, max=2)
         
         return mean_output, stddev_output
@@ -83,18 +92,21 @@ class Actor(nn.Module):
         mean = mean.squeeze()
         stddev = stddev.squeeze()
         stddev = stddev.exp() # min=-20, max=2 のとき 2.06e-9〜7
-        action_org = torch.normal(mean=mean, std=stddev, size=mean.size()) # meanの数字からdtddev分(2.06e-9〜7)程度に変動させる
-        # print("action_org : ", action_org)
+        # print("mean.size : ", mean.size())
+        # print("stddev.size : ", stddev.size())
+        action_org = torch.normal(mean=mean, std=stddev) # meanの数字からdtddev分(2.06e-9〜7)程度に変動させる
+        # print("action_org : ", action_org.shape)
         action_org = torch.tanh(action_org)
-        env_action = action_org * self.action_scale + self.action_centor
-        action_probs = torch.tanh(mean) * self.action_scale + self.action_centor
+        env_action = action_org * self.action_scale + self.action_center
+        # print("mean device : \n", mean.device)
+        action_probs = torch.tanh(mean) * self.action_scale + self.action_center
         # print("アクションの確率 : ", action_probs)
         
         return env_action, action_probs
 
     def evaluate_actions(self, x, actions):
         mean, _ = self(x)
-        action_probs = torch.tanh(mean) * self.action_scale + self.action_centor
+        action_probs = torch.tanh(mean) * self.action_scale + self.action_center
         logpi = torch.log(action_probs)
         pi = action_probs
         entropy = -(logpi * pi).sum(-1).mean()
@@ -104,18 +116,24 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     def __init__(self, n_in, n_mid, n_out):
         super(Critic, self).__init__()
-        self.fc1 = nn.Linear(n_in, n_mid)
-        self.fc2 = nn.Linear(n_mid, n_mid)
+        self.conv2d_1 = nn.Conv2d(1, 32, kernel_size=8, stride=4)
+        self.conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+
+        self.fc = nn.Linear(64 * 9 * 9, 512)
 
         # Critic
-        self.critic = nn.Linear(n_mid, 1) # 価値V側
+        self.critic = nn.Linear(512, 1) # 価値V側
 
     def forward(self, x):
         # print("x: shape : ", x.size())
-        h1 = F.relu(self.fc1(x))
-        h2 = F.relu(self.fc2(h1))
+        x = F.relu(self.conv2d_1(x))
+        x = F.relu(self.conv2d_2(x))
+        x = F.relu(self.conv2d_3(x))
+        x = x.view(-1, 1)
+        x = F.relu(self.fc(x))
 
-        critic_output = self.critic(h2)
+        critic_output = self.critic(x)
         
         return critic_output
 
@@ -205,8 +223,8 @@ class Brain:
             ratio = torch.ones(num_steps, num_processes, 1)
             pass
         else:
-            print("action_probs : ", action_probs.squeeze())
-            print("old_actin_probs : ", old_action_probs.squeeze())
+            # print("action_probs : ", action_probs.squeeze())
+            # print("old_actin_probs : ", old_action_probs.squeeze())
             ratio = torch.div(action_probs, old_action_probs.detach() + 0.00001)
             ratio = action_probs / old_action_probs
 
