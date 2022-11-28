@@ -15,7 +15,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from environs import Env
 import lgsvl
 
-from .brain import Actor, Critic, Discriminator, Brain, RolloutStorage
+from .brain import Actor, Critic, Discriminator, Brain
 from .potential_f import Potential_avoid
 from .ros2_numpy.ros2_numpy.point_cloud2 import pointcloud2_to_array
 from .ros2_numpy.ros2_numpy.occupancy_grid import occupancygrid_to_numpy
@@ -104,26 +104,28 @@ class Environment(Node):
         action_num = 3
         self.n_mid = 32
 
+        self.num_states = 1 # ニューラルネットワークの入力数
+        self.num_actions = 2 # purepursuit 0.5mと2m
+
+        self.obs_shape = [100, 100, 1]
         self.actor_hight = torch.tensor([0.15]).to(self.device)
         self.actor_low = torch.tensor([0.00]).to(self.device)
         self.actor = Actor(self.n_in, self.n_mid, self.n_out, self.actor_hight, self.actor_low).to(self.device)
-        self.critic = Critic(self.n_in, self.n_mid, self.n_out).to(self.device)
+        self.critic = Critic(self.obs_shape[2], self.obs_shape[0],self.obs_shape[1]).to(self.device)
         self.discriminator = Discriminator().to(self.device)
+        self.reward_buffer = 0
 
         self.global_brain = Brain(self.actor, self.critic, self.discriminator)
 
-        #格納用の変数の生成
-        self.obs_shape = [100, 100, 1]
         # print("self.obs_shape : ", self.obs_shape)
         self.current_obs = torch.zeros(NUM_PROCESSES, self.obs_shape[2], self.obs_shape[0], self.obs_shape[1]) # torch size ([16, 4])
-        self.rollouts = RolloutStorage(NUM_ADVANCED_STEP, NUM_PROCESSES, self.obs_shape[2], self.obs_shape[0], self.obs_shape[1], action_num)
         self.episode_rewards = torch.zeros([NUM_PROCESSES, 1]) # 現在の施行の報酬を保持
         self.final_rewards = torch.zeros([NUM_PROCESSES, 1]) # 最後の施行の報酬を保持
         self.old_action_probs = torch.zeros([NUM_ADVANCED_STEP, NUM_PROCESSES, 1]) # ratioの計算のため
         self.obs_np = np.zeros([NUM_PROCESSES, self.obs_shape[2], self.obs_shape[0], self.obs_shape[1]]) 
         self.reward_np = np.zeros([NUM_PROCESSES, 1])
         self.done_np = np.zeros([NUM_PROCESSES, 1])
-        self.each_step = np.zeros(NUM_PROCESSES) # 各環境のstep数を記録
+        self.each_step = np.zeros(0) # 各環境のstep数を記録
         self.episode = 0 # 環境0の施行数
 
         # ポテンシャル法の部分
@@ -440,23 +442,22 @@ class Environment(Node):
         dist_vehicle2goal = np.linalg.norm(goal_position - vehicle_position)
         # print("ゴールまでの距離 : ", dist_vehicle2goal)
         discriminator_output = discriminator_output.squeeze().detach().cpu().numpy()
-        reward = 0
+        reward = 0.0
         done = False
         if goal_flag is not True: # ゴールできないような経路を作成してしまった場合
             done = True
-            reward += 0
+            reward += 0.0
         if dist_vehicle2goal > 1.0: # ゴールに到達できなかった場合
-            reward += 0
+            reward += 0.0
         if np.round(discriminator_output) == 1: # 識別器によって、生成されたrouteが人っぽいと判断された場合
-            reward += 0
+            reward += 0.0
 
         if actions[0] < 0.1: # test
             reward += 1
-
-        if actions[1] > 0.1: # test
+        if actions[0] < 0.13: # test
             reward += 1
 
-        return reward, done
+        return torch.FloatTensor([reward]), done
 
     def init_environment(self):
         self.simulation_stop_flag = False
@@ -533,122 +534,91 @@ class Environment(Node):
         self.init_environment()
 
         # print("self.gridmap_object_value : ", self.gridmap_object_value.shape)
-        self.rollouts.observations[0] = torch.from_numpy(self.gridmap_object_value.transpose(2, 0, 1)).to(self.device)
         episode = 0
         frame = 0
 
-        for j in tqdm(range(NUM_EPISODES * NUM_PROCESSES)):
+        for episode in tqdm(range(NUM_EPISODES)):
             state =  self.gridmap_object_value.transpose(2, 0, 1)#誤差を状態として学習させたい
 
             state = torch.from_numpy(state).type(torch.FloatTensor).to(self.device)
             state = torch.unsqueeze(state, 0)
             # print("state : ", state.shape)
 
-            tmp_action_probs = torch.zeros([NUM_ADVANCED_STEP, NUM_PROCESSES, self.n_out])
-            
-            for step in range(NUM_ADVANCED_STEP):
+            for step in range(MAX_STEPS):          
                 with torch.no_grad():
-                    action, tmp_action_probs[step] = self.actor.act(self.rollouts.observations[step])
-                actions = action.squeeze().cpu().numpy()
+                    action, _ = self.actor.act(state)
+                actions = action[0].cpu().type(torch.FloatTensor)
                 print("actions : ", actions)
+                    
+                reward, done = self.env_feedback(actions=actions) # errorを次のobsercation_next(次の状態)として扱う
+                observation = self.gridmap_object_value.transpose(2, 0, 1) # 次の状態を格納
                 
-                for i in range(NUM_PROCESSES):
-                    self.reward_np[i], self.done_np[i] = self.env_feedback(actions=actions) # errorを次のobsercation_next(次の状態)として扱う
-                    self.obs_np[i] = self.gridmap_object_value.transpose(2, 0, 1) # 次の状態を格納
+                # self.path_record = self.path_record.append({"current_pose_x" : self.current_pose.pose.position.x,
+                #                     "current_pose_y" : self.current_pose.pose.position.y,
+                #                     "current_pose_z" : self.current_pose.pose.position.z,
+                #                     "closest_waypoint_x" : self.waypoint[self.closest_waypoint][0],
+                #                     "closest_waypoint_y" : self.waypoint[self.closest_waypoint][1],
+                #                     "closest_waypoint_z" : self.waypoint[self.closest_waypoint][2],
+                #                     "lookahead_distance" : self.lookahead_dist.data,
+                #                     }, ignore_index=True)
+
+                if done: # simulationが止まっていなかったらFalse, 終了するならTrue
+                    next_state = 0 # 便宜上, 0とおいておく. あとで省きます
+
+                    episode_10_array[episode % 10] = frame
                     
-                    # self.path_record = self.path_record.append({"current_pose_x" : self.current_pose.pose.position.x,
-                    #                     "current_pose_y" : self.current_pose.pose.position.y,
-                    #                     "current_pose_z" : self.current_pose.pose.position.z,
-                    #                     "closest_waypoint_x" : self.waypoint[self.closest_waypoint][0],
-                    #                     "closest_waypoint_y" : self.waypoint[self.closest_waypoint][1],
-                    #                     "closest_waypoint_z" : self.waypoint[self.closest_waypoint][2],
-                    #                     "lookahead_distance" : self.lookahead_dist.data,
-                    #                     }, ignore_index=True)
+                    if episode % 10 == 0: # 10episodeごとにウェイトを保存
+                        torch.save(self.global_brain.main_actor, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
 
-                    if self.done_np[i]: # simulationが止まっていなかったらFalse, 終了するならTrue
-                        state_next = None
-
-                        episode_10_array[episode % 10] = frame
-                        
-                        if episode % 10 == 0: # 10episodeごとにウェイトを保存
-                            torch.save(self.global_brain.actor, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
-
-                        if i == 0: # 分散処理の最初の項が終了した場合、結果を記録
-                            self.finish_environment()
-                            print("%d Episode: Finished after %d frame : 10試行の平均frame数 = %.1lf" %(episode, frame, episode_10_array.mean()))
-                            with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time).format(), 'a') as f:
-                                writer = csv.writer(f)
-                                writer.writerow([episode, frame, episode_10_array.mean()])
-                            episode += 1
-                            frame = 0
-
-                        if self.reward_np[i] == -1: # 途中で上手く走行できなかったら罰則として-1
-                            print("[失敗]報酬 : - 1")
-                            complete_episodes[episode % 10] = 0 # 連続成功記録をリセット
-                            self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
-                        
-                        elif self.reward_np[i] == 1: # 何事もなく、上手く走行出来たら報酬として+1
-                            print("[成功]報酬 : + 1")
-                            complete_episodes[episode % 10] = 1 # 連続成功記録を+1
-                            self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
-
-                        self.pandas_init()
-                        # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
-                        self.finish_environment()
-                        time.sleep(3)
-                        self.init_environment()
-
-                    else:
-                        self.each_step[i] += 1
+                    if reward == -1: # 途中で上手く走行できなかったら罰則として-1
+                        print("[失敗]報酬 : - 1")
+                        complete_episodes[episode % 10] = 0 # 連続成功記録をリセット
+                        self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
                     
+                    elif reward >= 1: # 何事もなく、上手く走行出来たら報酬として+1
+                        print("[成功]報酬 : + 1")
+                        complete_episodes[episode % 10] = 1 # 連続成功記録を+1
+                        self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
+
+                    self.pandas_init()
+                    # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
+                    self.finish_environment()
+                    time.sleep(3)
+                    self.init_environment()
+
+                    
+                    # episode += 1
+                    frame = 0
+
+                else:
+                    self.each_step += 1
+                    next_state = torch.from_numpy(observation).type(torch.FloatTensor).to(self.device)
+                    next_state = torch.unsqueeze(next_state, 0)
+                        
                 frame += 1
+                # if reward >= 1:
+                #     print("+1 報酬！！ : ", reward)
+                self.global_brain.memory.push(state, action, next_state, reward, done)
 
-                # 報酬をtensorに変換し、施行の総報酬に足す
-                reward = torch.from_numpy(self.reward_np).float()
-                print("reward : ", reward)
-                self.episode_rewards += reward
+                self.global_brain.td_memory.push(0)
 
-                # 各実行環境それぞれについて、doneならmaskは0に、継続中ならmaskは1にする
-                masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in self.done_np])
+                self.global_brain.actorcritic_update(step, episode)
 
-                # 最後の試行の報酬を更新する
-                self.final_rewards *= masks # done==0の場所のみ0になる
+                state = next_state
+                # print("new state : ", state.size())
 
-                # 継続中は0を足す、done時にはepisode_rewardsを足す
-                self.final_rewards += (1 - masks) * self.episode_rewards
+                if done:
+                    # 分散処理の最初の項が終了した場合、結果を記録
+                    self.finish_environment()
+                    print("%d Episode: Finished after %d frame : 10試行の平均frame数 = %.1lf" %(episode, frame, episode_10_array.mean()))
+                    with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time).format(), 'a') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([episode, frame, episode_10_array.mean()])
+                    self.global_brain.td_memory.update_td_error()
 
-                # 試行の総報酬を更新する
-                self.episode_rewards *= masks
-
-                # 現在の状態をdone時には全部0にする
-                self.current_obs *= masks
-
-                # current_obsを更新
-                obs = torch.from_numpy(self.obs_np).float()
-                self.current_obs = obs
-
-                # メモリ王ジェクトに今のstepのtransitionを挿入
-                # print("self.current_obs : ", self.current_obs.shape)
-                # print("action.data : ", action.data.shape)
-                # print("reward : ", reward.shape)
-                # print("masks : ", masks.shape)
-                self.rollouts.insert(self.current_obs, action.data, reward, masks)
-
-            # advancedのfor文　loop終了
-
-            with torch.no_grad():
-                next_value = self.critic.get_value(self.rollouts.observations[-1].to(self.device).detach())
-            
-            self.rollouts.compute_returns(next_value)
-
-            if j == 0:
-                self.global_brain.actorcritic_update(self.rollouts, self.old_action_probs.to(self.device), first_episode=True)
-            else:
-                self.global_brain.actorcritic_update(self.rollouts, self.old_action_probs.to(self.device), first_episode=False)
-            
-            self.old_action_probs = tmp_action_probs # 昔(old)のaction_probsをここで保存
-
-            self.rollouts.after_update()
+                    if (episode % 2 == 0):
+                        self.global_brain.update_target_q_function()
+                    break
 
             if np.sum(complete_episodes) >= NUM_COMPLETE_EP:
                 print("8/10回連続成功")
@@ -657,8 +627,8 @@ class Environment(Node):
                 print("無事に終了")
                 episode_final = True
                 break
-            
-            
+                
+                
             
 
 

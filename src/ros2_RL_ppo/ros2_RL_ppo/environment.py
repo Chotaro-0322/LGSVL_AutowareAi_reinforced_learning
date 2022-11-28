@@ -31,7 +31,8 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 10
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ppo/ros2_RL_ppo")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ppo/ros2_RL_ppo")
+# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ppo/ros2_RL_ppo")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -68,7 +69,8 @@ class Environment(Node):
 
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
-        self.waypoint = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
+        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
+        # self.waypoint = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_simpleroute0.5.csv", header=None, skiprows=1).to_numpy()
         # print("waypoint : \n", self.waypoint)
         # print("GPU is : ", torch.cuda.is_available())
 
@@ -182,14 +184,14 @@ class Environment(Node):
         current_pose = np.array([self.current_pose.pose.position.x, 
                           self.current_pose.pose.position.y, 
                           self.current_pose.pose.position.z])
-        waypoint_pose = self.waypoint[self.closest_waypoint, 0:3]
+        waypoint_pose = self.waypoints[self.closest_waypoint, 0:3]
 
         error_dist = np.sqrt(np.sum(np.square(waypoint_pose - current_pose)))
 
         done = False
         if error_dist > 1.0:
             done = True
-        if self.closest_waypoint >= (len(self.waypoint) - 1 - 15):
+        if self.closest_waypoint >= (len(self.waypoints) - 1 - 15):
             done = True
         
         return error_dist, 0, done, error_dist
@@ -211,7 +213,7 @@ class Environment(Node):
 
     def pandas_init(self):
         self.path_record = pd.DataFrame({"current_pose_x" : [self.current_pose.pose.position.x], "current_pose_y" : [self.current_pose.pose.position.y], "current_pose_z" : [self.current_pose.pose.position.z], 
-                                    "closest_waypoint_x" : [self.waypoint[self.closest_waypoint][0]], "closest_waypoint_y" : [self.waypoint[self.closest_waypoint][1]], "closest_waypoint_z" : [self.waypoint[self.closest_waypoint][2]],
+                                    "closest_waypoint_x" : [self.waypoints[self.closest_waypoint][0]], "closest_waypoint_y" : [self.waypoints[self.closest_waypoint][1]], "closest_waypoint_z" : [self.waypoints[self.closest_waypoint][2]],
                                     "lookahead_distance" : [0], "error" : [0]})
             # print("Init path_record : \n", path_record)
 
@@ -268,9 +270,9 @@ class Environment(Node):
                     self.path_record = self.path_record.append({"current_pose_x" : self.current_pose.pose.position.x,
                                         "current_pose_y" : self.current_pose.pose.position.y,
                                         "current_pose_z" : self.current_pose.pose.position.z,
-                                        "closest_waypoint_x" : self.waypoint[self.closest_waypoint][0],
-                                        "closest_waypoint_y" : self.waypoint[self.closest_waypoint][1],
-                                        "closest_waypoint_z" : self.waypoint[self.closest_waypoint][2],
+                                        "closest_waypoint_x" : self.waypoints[self.closest_waypoint][0],
+                                        "closest_waypoint_y" : self.waypoints[self.closest_waypoint][1],
+                                        "closest_waypoint_z" : self.waypoints[self.closest_waypoint][2],
                                         "lookahead_distance" : self.lookahead_dist.data,
                                         "error" : error_distance
                                         }, ignore_index=True)
@@ -312,6 +314,15 @@ class Environment(Node):
                         self.finish_environment()
                         time.sleep(3)
                         self.init_environment()
+
+                    elif action_array[0] > 3.0:
+                        self.reward_np[i] = torch.FloatTensor([1.0])
+                        self.each_step[i] += 1
+                    
+                    # elif action_array[0] < 4.0:
+                    #     self.reward_np[i] = torch.FloatTensor([-1.0])
+                    #     self.each_step[i] += 1
+                    
 
                     else:
                         self.reward_np[i] = torch.FloatTensor([0.0]) # 普段は報酬0

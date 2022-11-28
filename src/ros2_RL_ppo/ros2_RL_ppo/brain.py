@@ -104,6 +104,7 @@ class Actor(nn.Module):
 
     def evaluate_actions(self, x, actions):
         mean, _ = self(x)
+        print("mean : \n", mean)
         action_probs = torch.tanh(mean) * self.action_scale + self.action_centor
         logpi = torch.log(action_probs)
         pi = action_probs

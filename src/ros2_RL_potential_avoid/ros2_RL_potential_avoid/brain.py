@@ -15,11 +15,11 @@ GAMMA = 0.99
 TD_ERROR_EPSILON = 0.0001
 
 NUM_PROCESSES = 1
-NUM_ADVANCED_STEP = 10
+NUM_ADVANCED_STEP = 50
 value_loss_coef = 0.5
 entropy_coef = 0.5
 max_grad_norm = 0.5
-config_clip = 0.1
+config_clip = 0.2
 
 
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
@@ -69,14 +69,14 @@ class Actor(nn.Module):
         self.pi_mean = nn.Linear(512, n_out) # Advantage側
         self.stddev = nn.Linear(512, n_out)
 
-        print("action_space_high : ", action_space_high)
-        print("action_space_low : ", action_space_low)
+        # print("action_space_high : ", action_space_high)
+        # print("action_space_low : ", action_space_low)
         self.action_center = (action_space_high + action_space_low)/2
         self.action_scale = action_space_high - self.action_center
         self.action_range = action_space_high - action_space_low
-        print("self.action_scale : ", self.action_scale)
-        print("self.action_center : ", self.action_center)
-        print("self.action_range : ", self.action_range)
+        # print("self.action_scale : ", self.action_scale)
+        # print("self.action_center : ", self.action_center)
+        # print("self.action_range : ", self.action_range)
 
     def forward(self, x):
         # print("x: shape : ", x.size())
@@ -108,7 +108,7 @@ class Actor(nn.Module):
         # print("mean device : \n", mean.device)
         # action_probs = (torch.tanh(mean) * self.action_scale + self.action_center) / self.action_range
         action_probs = torch.sigmoid(mean) + 0.000000001
-        print("アクションの確率 : ", action_probs)
+        # print("アクションの確率 : ", action_probs)
         
         return env_action, action_probs
 
@@ -119,10 +119,10 @@ class Actor(nn.Module):
         # action_probs = (torch.tanh(mean) * self.action_scale + self.action_center) / self.action_range
         action_probs = torch.sigmoid(mean) + 0.000000001
         # action_probs = torch.tanh(mean)
-        print("action probs : ", action_probs)
+        # print("action probs : ", action_probs)
         logpi = torch.log(action_probs)
         pi = action_probs
-        print("logpi : ", logpi)
+        # print("logpi : ", logpi)
         entropy = -(logpi * pi).sum(-1).mean()
 
         return entropy, pi
@@ -218,9 +218,9 @@ class Brain:
         self.discriminator = discriminator
         self.discriminator = self.init_weight(self.discriminator)
 
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=0.01)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=0.01)
-        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.01)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=0.0001)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=0.0001)
+        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.0001)
 
     def init_weight(self, net):
         if isinstance(net, nn.Linear):
@@ -266,7 +266,7 @@ class Brain:
         print("Loss List : [value_loss : {}, clipped_loss : {}, entropy_loss : {}] ".format(value_loss * value_loss_coef, clipped_loss, entropy * entropy_coef))
 
         # total_loss = (value_loss * value_loss_coef - clipped_loss - entropy * entropy_coef)
-        total_loss = (value_loss * value_loss_coef - clipped_loss - entropy * entropy_coef) * 0.01
+        total_loss = value_loss * value_loss_coef - clipped_loss - entropy * entropy_coef
 
         self.actor.train()
         self.critic.train()
@@ -295,6 +295,7 @@ class Brain:
         authenticity_targets = torch.cat((fake_label, real_label), 0)
 
         # バックプロパゲーション
+        self.discriminator.train()
         mse_loss = nn.MSELoss()
         loss = mse_loss(authenticity_outputs, authenticity_targets) / 0.5
         self.discriminator.zero_grad()
