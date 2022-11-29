@@ -271,7 +271,8 @@ class Brain:
         # これを(state x BATCH_SIZE, action x BATCH_SIZER, state_next x BATCH_SIZE, state_next x BATCH_SIZE, reward x BATCH_SIZE)にする
         batch = Transition(*zip(*transitions))
         # print("batch : ", batch)
-
+        # print("batch.reward : ", batch.reward)
+        # print("batch.next_state : ", batch.next_state)
         # 各変数の要素をミニバッチに対応する形に変形する
         # 1x4がBATCH_SIZE分並んでいるところを　BATCH_SIZE x 4にする
         state_batch = torch.cat(batch.state).detach().to(self.device)

@@ -39,8 +39,8 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potential_avoid/ros2_RL_potential_avoid")
-# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potential_avoid/ros2_RL_potential_avoid")
+# os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potential_avoid/ros2_RL_potential_avoid")
+os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potential_avoid/ros2_RL_potential_avoid")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -85,12 +85,12 @@ class Environment(Node):
 
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
-        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
-        # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
+        # self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
+        self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
         self.global_start = self.waypoints[0].copy()
         self.global_goal = self.waypoints[-1].copy()
-        self.expert_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_ver2.csv", header=None, skiprows=1).to_numpy()
-        # self.expert_waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_ver2.csv", header=None, skiprows=1).to_numpy()
+        # self.expert_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_ver2.csv", header=None, skiprows=1).to_numpy()
+        self.expert_waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_ver2.csv", header=None, skiprows=1).to_numpy()
         self.expert_global_start = self.expert_waypoints[0].copy()
         self.expert_global_goal = self.expert_waypoints[-1].copy()
         self.map_offset = [43, 28.8, 6.6] # マップのズレを試行錯誤で治す！ ROS[x, y, z] ↔ Unity[z, -x, y]
@@ -309,8 +309,8 @@ class Environment(Node):
         self.on_collision_flag = True
 
     def check_error(self):
-        current_pose = np.array([self.current_pose[0], 
-                          self.current_pose[1], 
+        current_pose = np.array([self.current_pose[0],
+                          self.current_pose[1],
                           0])
         waypoint_pose = self.waypoint[self.closest_waypoint, 0:3]
 
@@ -452,10 +452,15 @@ class Environment(Node):
         if np.round(discriminator_output) == 1: # 識別器によって、生成されたrouteが人っぽいと判断された場合
             reward += 0.0
 
-        if actions[0] < 0.1: # test
-            reward += 1
-        if actions[0] < 0.13: # test
-            reward += 1
+        # closest_waypointを探索
+        print("self.expert_waypoints[:, :2] : ", self.expert_waypoints[:, :2].shape)
+        error2expwaypoint = np.sqrt(np.sum(np.square(self.expert_waypoints[:, :2] - self.current_pose), axis=1))
+        # print("error2waypoint : ", error2waypoint)
+        closest_expwaypoint = error2expwaypoint.argmin()
+        if error2expwaypoint[closest_expwaypoint] > 1.0:
+            print("closes_expwaypoint : ", closest_expwaypoint)
+            reward -= 1
+            done = True
 
         return torch.FloatTensor([reward]), done
 
@@ -563,7 +568,8 @@ class Environment(Node):
                 #                     }, ignore_index=True)
 
                 if done: # simulationが止まっていなかったらFalse, 終了するならTrue
-                    next_state = 0 # 便宜上, 0とおいておく. あとで省きます
+                    next_state = torch.from_numpy(observation).type(torch.FloatTensor).to(self.device) # 便宜上, 0とおいておく. あとで省きます
+                    next_state = torch.unsqueeze(next_state, 0)
 
                     episode_10_array[episode % 10] = frame
                     
@@ -580,11 +586,7 @@ class Environment(Node):
                         complete_episodes[episode % 10] = 1 # 連続成功記録を+1
                         self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
 
-                    self.pandas_init()
-                    # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
-                    self.finish_environment()
-                    time.sleep(3)
-                    self.init_environment()
+                    
 
                     
                     # episode += 1
@@ -614,10 +616,15 @@ class Environment(Node):
                     with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time).format(), 'a') as f:
                         writer = csv.writer(f)
                         writer.writerow([episode, frame, episode_10_array.mean()])
-                    self.global_brain.td_memory.update_td_error()
+                    # self.global_brain.td_memory.update_td_error()
 
-                    if (episode % 2 == 0):
-                        self.global_brain.update_target_q_function()
+                    # if (episode % 2 == 0):
+                        # self.global_brain.update_target_q_function()
+                    self.pandas_init()
+                    # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
+                    self.finish_environment()
+                    time.sleep(3)
+                    self.init_environment()
                     break
 
             if np.sum(complete_episodes) >= NUM_COMPLETE_EP:
