@@ -453,9 +453,9 @@ class Environment(Node):
             reward += 0.0
 
         if actions[0] < 0.1: # test
-            reward += 1
-        if actions[0] < 0.13: # test
-            reward += 1
+            reward -= 1
+        if actions[0] > 0.13: # test
+            reward -= 1
 
         return torch.FloatTensor([reward]), done
 

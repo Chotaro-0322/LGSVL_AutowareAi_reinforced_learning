@@ -7,7 +7,7 @@ from collections import namedtuple
 
 import numpy as np
 
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 NUM_STACK_FRAME = 4
 CAPACITY = 10000
 GAMMA = 0.99
@@ -240,9 +240,9 @@ class Brain:
         self.discriminator = discriminator
         self.discriminator = self.init_weight(self.discriminator)
 
-        self.actor_optimizer = optim.Adam(self.main_actor.parameters(), lr=0.00001)
-        self.critic_optimizer = optim.Adam(self.main_critic.parameters(), lr=0.00001)
-        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.0001)
+        self.actor_optimizer = optim.Adam(self.main_actor.parameters(), lr=0.0001)
+        self.critic_optimizer = optim.Adam(self.main_critic.parameters(), lr=0.0001)
+        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.001)
 
         self.actor_update_interval = 2
 
