@@ -1,5 +1,10 @@
+import os
+import datetime
 import math
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import cv2
 
 class Potential_avoid():
     """https://qiita.com/koichi_baseball/items/0a6eef85be8d700f6125を参考"""
@@ -23,13 +28,13 @@ class Potential_avoid():
                 obst_pot = self.potential_max
             else:
                 if obst[2] == 50: # ただの壁(costmapを作成したときに適当に決めた値)
-                    obst_weight = actions[0]
+                    obst_weight_x, obst_weight_y = actions[0], actions[0] # 壁はx,yでわけない
                 elif obst[2] == 75: # 車だった
-                    obst_weight = actions[1]
+                    obst_weight_x, obst_weight_y = actions[2], actions[3]
                 elif obst[2] == 100: # 歩行者だった
-                    obst_weight = actions[2] 
+                    obst_weight_x, obst_weight_y = actions[4], actions[5]
                 # print("obst_weight : ", obst_weight)
-                obst_pot =  1 / math.sqrt(pow((y - obst[1]), 2) + pow((x - obst[0]), 2)) * obst_weight # obst[2]にはその物体のobst_weightが入力されている 
+                obst_pot =  1 / math.sqrt(pow((y - obst[1]), 2) + pow((x - obst[0]), 2)) * np.sqrt(np.square(obst_weight_x) + np.square(obst_weight_y))  # obst[2]にはその物体のobst_weightが入力されている 
                 # obst_pot += obst_pot * self.weight_obst
 
             tmp_pot += obst_pot
@@ -39,12 +44,84 @@ class Potential_avoid():
             goal_pot = self.potential_min
         else:
             goal_pot = -1 / math.sqrt(pow((y - goal[1]),  2) + pow((x - goal[0]),  2))
-
-        pot_all = tmp_pot + self.weight_goal * goal_pot
+        
+        pot_all = tmp_pot + actions[6] * goal_pot # actions[6]はゴールのウェイト
 
         return pot_all
+    
+    def plot(self, output_route, grid_map, goal, obst_target, obst_grid, actions, now_time):
+        # print("actions : ", actions)
+        grid_height, grid_width = grid_map.shape[:2]
+        pot_map = np.zeros((100, 100))
+        
+        for obst in obst_target:
+            if obst[2] == 50: # ただの壁(costmapを作成したときに適当に決めた値)
+                obst_weight_x, obst_weight_y = actions[0], actions[0] # 壁はx,yでわけない
+            elif obst[2] == 75: # 車だった
+                obst_weight_x, obst_weight_y = actions[2], actions[3]
+            elif obst[2] == 100: # 歩行者だった
+                obst_weight_x, obst_weight_y = actions[4], actions[5]
 
-    def calculation(self, start, goal, actions, grid_map, yaw, velocity, change_flag):
+            # print("grid_map[:2] : ", grid_map[:, :, :2].shape)
+            obst_pot = 1 / np.sqrt(np.sum(np.square(grid_map[:, :, :2] - obst[:2]), axis=2)) * np.sqrt(np.square(obst_weight_x) + np.square(obst_weight_y))
+            # print("obst_pot : ", obst_pot.shape)
+            # print("obst : ", obst[:2])
+            pot_map += obst_pot
+        
+        # 障害物の位置はmaxにする
+        # for o_grid in obst_grid:
+        #     pot_map[o_grid[0], o_grid[1]] = 1 * np.sqrt(np.square(obst_weight_x) + np.square(obst_weight_y))
+        
+        # ゴールの位置から計算
+        goal_pot = -1 / np.sqrt(np.square(grid_map[:, :, 0] - goal[0]) + np.square(grid_map[:, :, 1] - goal[1]))
+
+        # 合計を算出
+        pot_all = pot_map + actions[6] * goal_pot
+        pot_all  = np.clip(pot_all , -100, 100)
+
+        # 画像に構造を追加
+        pot_all_max = np.max(pot_all)
+        pot_all_min = np.min(pot_all)
+        pot_all_normal = (pot_all - pot_all_min) / (pot_all_max - pot_all_min)
+        
+        
+
+        # ルートをプロット
+        route_grid = np.zeros((0))
+        for route in output_route:
+            grid_from_pose = np.stack([np.full((grid_height, grid_width), route[0])
+                                      ,np.full((grid_height, grid_width), route[1])], -1)
+            # gridmapとgrid_fram_waypointの差を計算
+            error_grid_space = np.sum(np.abs(grid_map[:, :, :2] - grid_from_pose), axis=2)
+            # print("error_grid_scape : ", error_grid_space.shape)
+            # 計算された差から, 一番値が近いグリッドを計算
+            # nearest_grid_space = [np.argmin(error_grid_space, axis=0)[0], np.argmin(error_grid_space, axis=1)[0]]
+            nearest_grid_space = np.array(np.unravel_index(np.argmin(error_grid_space), error_grid_space.shape)) # 最小値の座標を取得
+            # print("nearest_grid_space : ", nearest_grid_space)
+            # print("route_grid : ", route_grid)
+            route_grid = np.block([route_grid, nearest_grid_space])
+        route_grid = route_grid.reshape(-1, 2)
+        route_grid[:, 0] = grid_height - route_grid[:, 0] # 描写のために反転する
+        
+        # print("route_grid : ", route_grid)
+
+        plot_t_delta = datetime.timedelta(hours=9)
+        plot_JST = datetime.timezone(plot_t_delta, "JST")
+        plot_now_JST = datetime.datetime.now(plot_JST)
+        plot_now_time = plot_now_JST.strftime("%Y%m%d%H%M%S")
+
+        # print("pot_all : \n", pot_all)
+        fig, ax = plt.subplots(figsize=(100, 100))
+        ax.invert_yaxis()
+        pot_all_normal = cv2.flip(pot_all_normal, 0)
+        sns.heatmap(pot_all_normal, square=True, cmap='RdBu')
+        plt.scatter(route_grid[:, 1], route_grid[:, 0], s=3000, marker="x", linewidths=10, c="green")
+        plt.savefig("./data_{}/image/potentional_map_{}.png".format(now_time, plot_now_time))
+        # print("pot_all : ", pot_all.shape)
+
+    def calculation(self, start, goal, actions, grid_map, yaw, velocity, change_flag, now_time):
+        actions = actions.numpy()
+        # print("actions : ", actions)
         # grid_map内の障害物の位置をまとめる
         grid_height, grid_width = grid_map.shape[0], grid_map.shape[1]
         # print("grid_map : ", grid_map.shape)
@@ -58,6 +135,7 @@ class Potential_avoid():
         # print("start : ", start)
         
         count = 0
+        goal_flag = False
 
         while True:
             count += 1
@@ -65,13 +143,17 @@ class Potential_avoid():
             error2obst = np.sum(np.abs(obst_position[:, :2] - xy_pos), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
             # print("error2obst_sort", error2obst.shape)
             error2obst_sort = np.argsort(error2obst)
-            nearest_obstacle = np.zeros((50, 3))
-            
-            
-            for i in range(50): #近い障害物の座標をn個得る
-                # print("error2obst_sort : ", np.where(error2obst_sort == i)[0][0])
-                nearest_obstacle[i] = obst_position[np.where(error2obst_sort == i)[0][0]]
-            # print("nearest_obstacle : ", nearest_obstacle.shape)
+            if len(error2obst_sort) > 200:
+                nearest_obstacle = np.zeros((200, 3))
+            else:
+                nearest_obstacle = np.zeros((len(error2obst), 3))
+            # print("np.where(error2obst_sort == i)", np.where(error2obst_sort == 0))
+            for i in range(len(nearest_obstacle)): #近い障害物の座標をn個得る
+                # print("error2obst_sort : ", error2obst_sort)
+                # print("error2obst_sort : ", np.where(error2obst_sort == i)[0])
+                # print("obst_position : ", obst_position[np.where(error2obst_sort == i)[0]])
+                nearest_obstacle[i] = obst_position[np.where(error2obst_sort == i)[0]]
+            # print("nearest_obstacle : ", nearest_obstacle)
 
             vx = -(self.cal_potential(xy_pos[0] + self.delt, xy_pos[1], goal, nearest_obstacle, actions) - self.cal_potential(xy_pos[0], xy_pos[1], goal, nearest_obstacle, actions)) / self.delt
             vy = -(self.cal_potential(xy_pos[0], xy_pos[1] + self.delt, goal, nearest_obstacle, actions) - self.cal_potential(xy_pos[0], xy_pos[1], goal, nearest_obstacle, actions)) / self.delt
@@ -90,11 +172,16 @@ class Potential_avoid():
             # print(np.array([yx_pos[1], yx_pos[0], 0, yaw, velocity, change_flag]).shape)
 
             output_route = np.append(output_route, np.array([xy_pos[0], xy_pos[1], 0, yaw, velocity, change_flag])[np.newaxis, :], axis=0)
-
+            
             # ゴールに近づいた場合，10,000回ループした場合，終了
             if np.abs(goal[0] - xy_pos[0]) < self.speed and np.abs(goal[1] - xy_pos[1]) < self.speed:
                 # print("output_route  : \n", output_route.shape)
-                return True, output_route
-            if count > 500:
+                goal_flag = True
+                break
+            if count > 150:
                 print("count over !!!")
-                return False, output_route
+                goal_flag = False
+                break
+        self.plot(output_route, grid_map, goal, nearest_obstacle, obst_grid, actions, now_time)
+
+        return goal_flag, output_route

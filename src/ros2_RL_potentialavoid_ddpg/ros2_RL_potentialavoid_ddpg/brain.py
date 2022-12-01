@@ -88,10 +88,14 @@ class Actor(nn.Module):
         self.conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
 
+        self.batch_norm_1 = nn.InstanceNorm2d(32)
+        self.batch_norm_2 = nn.InstanceNorm2d(64)
+        self.batch_norm_3 = nn.InstanceNorm2d(64)
+
         self.fc = nn.Linear(64 * 9 * 9, 512)
 
         # Actor
-        self.fc2 = nn.Linear(512, n_out) # Advantage側
+        self.fc2 = nn.Linear(512, n_out*2+1) # [壁x, 壁y, 車x, 車y, 人x, 人y, ゴール]
 
         self.action_center = (action_space_high + action_space_low)/2
         self.action_scale = action_space_high - self.action_center
@@ -100,10 +104,15 @@ class Actor(nn.Module):
     def forward(self, x):
         # print("x: shape : ", x.size())
         # print("x : ", type(x))
+        # print("first x size : ", x.size())
         x = F.relu(self.conv2d_1(x))
+        x = self.batch_norm_1(x)
         x = F.relu(self.conv2d_2(x))
+        x = self.batch_norm_2(x)
         x = F.relu(self.conv2d_3(x))
+        x = self.batch_norm_3(x)
         # print("x size : ", x.size())
+        # print("x : ", x.size())
         # print("x : ", x.size())
         x = x.view(x.size(0), -1)
         # print("x size flatten : ", x.size())
@@ -131,6 +140,10 @@ class Critic(nn.Module):
         self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
         self.upsample = nn.Upsample(size=(100, 100), mode='bicubic')
 
+        self.batch_norm_1 = nn.InstanceNorm2d(32)
+        self.batch_norm_2 = nn.InstanceNorm2d(64)
+        self.batch_norm_3 = nn.InstanceNorm2d(64)
+
         self.fc = nn.Linear(64 * 9 * 9, 512)
 
         # Critic
@@ -138,7 +151,6 @@ class Critic(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x, actions):
-        
         actions = actions.unsqueeze(1).unsqueeze(1) # [batch_size, 1, 100, 100]まで拡張
         # print("actions : ", actions.size())
         # print("x : ", x.size())
@@ -149,15 +161,21 @@ class Critic(nn.Module):
         x_2 = x
         # print("x: shape : ", x.size())
         x = F.relu(self.conv2d_1(x))
+        x = self.batch_norm_1(x)
         x = F.relu(self.conv2d_2(x))
+        x = self.batch_norm_2(x)
         x = F.relu(self.conv2d_3(x))
+        x = self.batch_norm_3(x)
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc(x))
         critic_output1 = self.critic(x)
 
         x_2 = F.relu(self.conv2d_1(x_2))
+        x_2 = self.batch_norm_1(x_2)
         x_2 = F.relu(self.conv2d_2(x_2))
+        x_2 = self.batch_norm_2(x_2)
         x_2 = F.relu(self.conv2d_3(x_2))
+        x_2 = self.batch_norm_3(x_2)
         x_2 = x_2.view(x_2.size(0), -1)
         x_2 = F.relu(self.fc(x_2))
         critic_output2 = self.critic(x_2)
@@ -271,7 +289,8 @@ class Brain:
         # これを(state x BATCH_SIZE, action x BATCH_SIZER, state_next x BATCH_SIZE, state_next x BATCH_SIZE, reward x BATCH_SIZE)にする
         batch = Transition(*zip(*transitions))
         # print("batch : ", batch)
-
+        # print("batch.reward : ", batch.reward)
+        # print("batch.next_state : ", batch.next_state)
         # 各変数の要素をミニバッチに対応する形に変形する
         # 1x4がBATCH_SIZE分並んでいるところを　BATCH_SIZE x 4にする
         state_batch = torch.cat(batch.state).detach().to(self.device)

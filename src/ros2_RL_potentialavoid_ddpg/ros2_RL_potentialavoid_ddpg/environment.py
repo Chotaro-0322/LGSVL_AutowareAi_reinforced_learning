@@ -39,7 +39,7 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potential_avoid/ros2_RL_potential_avoid")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
 # os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potential_avoid/ros2_RL_potential_avoid")
 print("current pose : ", os.getcwd())
 
@@ -48,6 +48,7 @@ JST = datetime.timezone(t_delta, "JST")
 now_JST = datetime.datetime.now(JST)
 now_time = now_JST.strftime("%Y%m%d%H%M%S")
 os.makedirs("./data_{}/weight".format(now_time))
+os.makedirs("./data_{}/image".format(now_time))
 
 # Python program raising
 # exceptions in a python
@@ -85,11 +86,14 @@ class Environment(Node):
 
         # その他Flagや設定
         self.initialpose_flag = False # ここの値がTrueなら, initialposeによって自己位置が完了したことを示す。
-        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
+        self.on_collision_flag = False
+        self.complete_episode_num = 0
+        self.penalty_num = 0
+        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
         # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
         self.global_start = self.waypoints[0].copy()
         self.global_goal = self.waypoints[-1].copy()
-        self.expert_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_ver2.csv", header=None, skiprows=1).to_numpy()
+        self.expert_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
         # self.expert_waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_ver2.csv", header=None, skiprows=1).to_numpy()
         self.expert_global_start = self.expert_waypoints[0].copy()
         self.expert_global_goal = self.expert_waypoints[-1].copy()
@@ -108,9 +112,12 @@ class Environment(Node):
         self.num_actions = 2 # purepursuit 0.5mと2m
 
         self.obs_shape = [100, 100, 1]
-        self.actor_hight = torch.tensor([0.15]).to(self.device)
-        self.actor_low = torch.tensor([0.00]).to(self.device)
-        self.actor = Actor(self.n_in, self.n_mid, self.n_out, self.actor_hight, self.actor_low).to(self.device)
+        self.actor_up = torch.tensor([3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 100]).to(self.device)
+        self.actor_down = torch.tensor([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 80]).to(self.device)
+        self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
+        self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
+        self.actor_value = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
+        self.actor = Actor(self.n_in, self.n_mid, self.n_out, self.actor_up, self.actor_down).to(self.device)
         self.critic = Critic(self.obs_shape[2], self.obs_shape[0],self.obs_shape[1]).to(self.device)
         self.discriminator = Discriminator().to(self.device)
         self.reward_buffer = 0
@@ -129,7 +136,7 @@ class Environment(Node):
         self.episode = 0 # 環境0の施行数
 
         # ポテンシャル法の部分
-        self.Potential_avoid = Potential_avoid(delt=0.5, speed=0.5, weight_goal=30) # weight_obstはディープラーニングで計算
+        self.Potential_avoid = Potential_avoid(delt=0.2, speed=0.5, weight_goal=30) # weight_obstはディープラーニングで計算
 
         self.pcd_as_numpy_array = np.zeros((0))
         self.gridmap_object_value = np.zeros((0))
@@ -219,42 +226,56 @@ class Environment(Node):
         spawns = self.sim.get_spawn()
 
         state = lgsvl.AgentState()
-        state.transform = spawns[0]
-        ego = self.sim.add_agent(self.env.str("LGSVL__VEHICLE_0", lgsvl.wise.DefaultAssets.seniorcar), lgsvl.AgentType.EGO, state)
+        obstacle_foward = lgsvl.utils.transform_to_forward(spawns[0])
+        obstacle_right = lgsvl.utils.transform_to_right(spawns[0])
+        obstacle_up = lgsvl.utils.transform_to_up(spawns[0])
+        # state.transform = spawns[0]
+        state.transform.position = spawns[0].position + 8.0 * obstacle_right + 2.0 + obstacle_foward + -2.0 * obstacle_up
+        self.ego = self.sim.add_agent(self.env.str("LGSVL__VEHICLE_0", lgsvl.wise.DefaultAssets.seniorcar), lgsvl.AgentType.EGO, state)
 
         obstacle_foward = lgsvl.utils.transform_to_forward(spawns[0])
         obstacle_state = lgsvl.AgentState()
-        obstacle_state.transform.position = spawns[0].position + 15.0 * obstacle_foward
+        obstacle_state.transform.position = state.transform.position + 10.0 * obstacle_foward
         
-        self.obstacle_ego = self.sim.add_agent("Sedan", lgsvl.AgentType.NPC, obstacle_state)
+        self.obstacle_ego = self.sim.add_agent("Bob", lgsvl.AgentType.PEDESTRIAN, obstacle_state)
         self.obstacle_ego.transform
 
         self.lgsvl_objects = [
             self.obstacle_ego,
         ]
+        self.all_objects = {
+            self.ego: "my_vehicle",
+            self.obstacle_ego: "obstacle_ego",
+        }
 
-        ego.on_collision(self.on_collision)
+        self.ego.on_collision(self.on_collision)
         self.obstacle_ego.on_collision(self.on_collision)
 
         # An EGO will not connect to a bridge unless commanded to
         # print("Bridge connected:", ego.bridge_connected)
 
         # The EGO is now looking for a bridge at the specified IP and port
-        ego.connect_bridge(self.env.str("LGSVL__AUTOPILOT_0_HOST", lgsvl.wise.SimulatorSettings.bridge_host), self.env.int("LGSVL__AUTOPILOT_0_PORT", lgsvl.wise.SimulatorSettings.bridge_port))
+        self.ego.connect_bridge(self.env.str("LGSVL__AUTOPILOT_0_HOST", lgsvl.wise.SimulatorSettings.bridge_host), self.env.int("LGSVL__AUTOPILOT_0_PORT", lgsvl.wise.SimulatorSettings.bridge_port))
 
         print("Waiting for connection...")
 
-        while not ego.bridge_connected:
+        while not self.ego.bridge_connected:
             time.sleep(0.1)
 
         # 車両の初期値点(initial_pose)をpublish
         initial_pose = PoseWithCovarianceStamped()
         initial_pose.header.stamp = Clock().now().to_msg()
         initial_pose.header.frame_id = "map"
-        initial_pose.pose.pose.position.x = -0.0749168
-        initial_pose.pose.pose.position.y = 0.04903287
-        initial_pose.pose.pose.orientation.z = -0.0179830
-        initial_pose.pose.pose.orientation.w = 0.9998382918
+        # initial_pose.pose.pose.position.x = -0.0749168
+        # initial_pose.pose.pose.position.y = 0.04903287
+        # initial_pose.pose.pose.orientation.z = -0.0179830
+        # initial_pose.pose.pose.orientation.w = 0.9998382918
+        # initial_pose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
+        #
+        initial_pose.pose.pose.position.x = 1.30901241302
+        initial_pose.pose.pose.position.y = -10.1023960114
+        initial_pose.pose.pose.orientation.z = -0.0402139551059
+        initial_pose.pose.pose.orientation.w = 0.999191091741
         initial_pose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
         self.initialpose_pub.publish(initial_pose)
 
@@ -265,79 +286,90 @@ class Environment(Node):
         markerArray = MarkerArray()
         while not self.simulation_stop_flag: # simulation_stop_flagがFalseのときは実行し続ける
             # print("Runing !!!! step : ", step)
-            self.sim.run(0.05)
-            if running_count % 10 == 0:
+            self.sim.run(0.1)
+            if running_count % 2 == 0:
                 self.lgsvl_object_publisher()
-                ego_quaternion = quaternion.from_rotation_vector(np.array([ego.state.transform.rotation.x, ego.state.transform.rotation.y, ego.state.transform.rotation.z]))
+                # ego_quaternion = quaternion.from_rotation_vector(np.array([ego.state.transform.rotation.x, ego.state.transform.rotation.y, ego.state.transform.rotation.z]))
                 # print("ego_quaternion : ", ego_quaternion)
                 # NPCの位置を出力
-                marker = Marker()
-                marker.header.frame_id = "/lgsvlmap"
-                marker.type = marker.SPHERE
-                marker.action = marker.ADD
-                marker.scale.x = 1.0
-                marker.scale.y = 1.0
-                marker.scale.z = 1.0
-                marker.color.a = 1.0
-                marker.color.r = 1.0
-                marker.color.g = 1.0
-                marker.color.b = 0.0
-                marker.pose.orientation.x = ego_quaternion.x
-                marker.pose.orientation.y = ego_quaternion.y
-                marker.pose.orientation.z = ego_quaternion.z
-                marker.pose.orientation.w = ego_quaternion.w
-                marker.pose.position.x = self.obstacle_ego.state.transform.position.z + self.map_offset[0]
-                marker.pose.position.y = -self.obstacle_ego.state.transform.position.x + self.map_offset[1]
-                marker.pose.position.z = self.obstacle_ego.state.transform.position.y + self.map_offset[2]
+                # marker = Marker()
+                # marker.header.frame_id = "/lgsvlmap"
+                # marker.type = marker.SPHERE
+                # marker.action = marker.ADD
+                # marker.scale.x = 1.0
+                # marker.scale.y = 1.0
+                # marker.scale.z = 1.0
+                # marker.color.a = 1.0
+                # marker.color.r = 1.0
+                # marker.color.g = 1.0
+                # marker.color.b = 0.0
+                # marker.pose.orientation.x = ego_quaternion.x
+                # marker.pose.orientation.y = ego_quaternion.y
+                # marker.pose.orientation.z = ego_quaternion.z
+                # marker.pose.orientation.w = ego_quaternion.w
+                # marker.pose.position.x = self.obstacle_ego.state.transform.position.z + self.map_offset[0]
+                # marker.pose.position.y = -self.obstacle_ego.state.transform.position.x + self.map_offset[1]
+                # marker.pose.position.z = self.obstacle_ego.state.transform.position.y + self.map_offset[2]
 
-                markerArray.markers.append(marker)
-                id = 0
-                for m in markerArray.markers:
-                    m.id = id
-                    id += 1
-                self.npc_marker_publisher.publish(markerArray)
+                # markerArray.markers.append(marker)
+                # id = 0
+                # for m in markerArray.markers:
+                #     m.id = id
+                #     id += 1
+                # self.npc_marker_publisher.publish(markerArray)
 
                 # print("npc_state", type(ego))
 
             running_count += 1
         # print("SIMULATOR is reseted !!!")
         sys.exit()
+
     def on_collision(self, agent1, agent2, contact):
-        name1 = self.objects[agent1]
-        name2 = self.objects[agent2] if agent2 is not None else "OBSTACLE"
+        name1 = self.all_objects[agent1]
+        name2 = self.all_objects[agent2] if agent2 is not None else "OBSTACLE"
         print("{} collided with {} at {}".format(name1, name2, contact))
         self.on_collision_flag = True
 
-    def check_error(self):
-        current_pose = np.array([self.current_pose[0], 
-                          self.current_pose[1], 
-                          0])
-        waypoint_pose = self.waypoint[self.closest_waypoint, 0:3]
-
-        error_dist = np.sqrt(np.sum(np.square(waypoint_pose - current_pose)))
-
-        done = False
-        if error_dist > 1.0:
-            done = True
-        if self.closest_waypoint >= (len(self.waypoint) - 1 - 15):
-            done = True
-        
-        return error_dist, 0, done, error_dist
+    def publish_route_thread(self):
+        while True:
+            """------------経路をpublish------------"""
+            # print("publish route")
+            multiarray = Float32MultiArray()
+            multiarray.layout.dim.append(MultiArrayDimension())
+            multiarray.layout.dim.append(MultiArrayDimension())
+            multiarray.layout.dim[0].label = "height"
+            multiarray.layout.dim[1].label = "width"
+            multiarray.layout.dim[0].size = self.waypoints.shape[0]
+            multiarray.layout.dim[1].size = self.waypoints.shape[1]
+            multiarray.layout.dim[0].stride = self.waypoints.shape[0] * self.waypoints.shape[1]
+            multiarray.layout.dim[1].stride = self.waypoints.shape[1]
+            multiarray.data = self.waypoints.reshape(1, -1)[0].tolist()
+            self.base_waypoint_publisher.publish(multiarray)
+            time.sleep(0.2)
 
     def env_feedback(self, actions):
+        time.sleep(0.1)
+        """------------受け取ったactinosからポテンシャルウェイトを調節-----------------"""
+        self.actor_value += actions
+        self.actor_value = torch.max(torch.min(self.actor_value, self.actor_limit_high), self.actor_limit_low)
+        # print("actor_value : \n", self.actor_value)
         """------------経路をpublish------------"""
-        multiarray = Float32MultiArray()
-        multiarray.layout.dim.append(MultiArrayDimension())
-        multiarray.layout.dim.append(MultiArrayDimension())
-        multiarray.layout.dim[0].label = "height"
-        multiarray.layout.dim[1].label = "width"
-        multiarray.layout.dim[0].size = self.waypoints.shape[0]
-        multiarray.layout.dim[1].size = self.waypoints.shape[1]
-        multiarray.layout.dim[0].stride = self.waypoints.shape[0] * self.waypoints.shape[1]
-        multiarray.layout.dim[1].stride = self.waypoints.shape[1]
-        multiarray.data = self.waypoints.reshape(1, -1)[0].tolist()
-        self.base_waypoint_publisher.publish(multiarray)
-
+        # error2waypoint = np.sum(np.abs(self.waypoints[:, :2] - self.current_pose), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
+        # # print("error2waypoint : ", error2waypoint)
+        # closest_waypoint = error2waypoint.argmin()
+        # self.waypoints = self.waypoints[closest_waypoint:]
+        # # print("publish route")
+        # multiarray = Float32MultiArray()
+        # multiarray.layout.dim.append(MultiArrayDimension())
+        # multiarray.layout.dim.append(MultiArrayDimension())
+        # multiarray.layout.dim[0].label = "height"
+        # multiarray.layout.dim[1].label = "width"
+        # multiarray.layout.dim[0].size = self.waypoints.shape[0]
+        # multiarray.layout.dim[1].size = self.waypoints.shape[1]
+        # multiarray.layout.dim[0].stride = self.waypoints.shape[0] * self.waypoints.shape[1]
+        # multiarray.layout.dim[1].stride = self.waypoints.shape[1]
+        # multiarray.data = self.waypoints.reshape(1, -1)[0].tolist()
+        # self.base_waypoint_publisher.publish(multiarray)
         "--------------closest_waypointsおよび、gridmap内の自車位置の予測------------"
         # closest_waypointを探索
         error2waypoint = np.sum(np.abs(self.waypoints[:, :2] - self.current_pose), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
@@ -367,31 +399,31 @@ class Environment(Node):
         # print("goal_posistion : ", goal_position)
         # print("current_pose : ", self.current_pose)
         yaw = self.waypoints[closest_waypoint, 3]
-        velocity = self.waypoints[0, 4]
+        velocity = 6
         change_flag = self.waypoints[0, 5]
-        goal_flag, output_route = self.Potential_avoid.calculation(vehicle_position, goal_position, actions, self.gridmap, yaw, velocity, change_flag)
-        # print("output_route : ", output_route.shape)
+        goal_flag, output_route = self.Potential_avoid.calculation(vehicle_position, goal_position, actions, self.gridmap, yaw, velocity, change_flag, now_time)
+        print("output_route : ", output_route.shape)
         # if goal_flag == True:
-        result_route = output_route
-        if goal_flag:
-            # closest_waypointを探索
-            error2waypoint = np.sum(np.abs(output_route[:, :2] - self.current_pose), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
-            closest_waypoint = error2waypoint.argmin()
-            publish_route = result_route
-            multiarray = Float32MultiArray()
-            multiarray.layout.dim.append(MultiArrayDimension())
-            multiarray.layout.dim.append(MultiArrayDimension())
-            multiarray.layout.dim[0].label = "height"
-            multiarray.layout.dim[1].label = "width"
-            multiarray.layout.dim[0].size = publish_route.shape[0]
-            multiarray.layout.dim[1].size = publish_route.shape[1]
-            multiarray.layout.dim[0].stride = publish_route.shape[0] * publish_route.shape[1]
-            multiarray.layout.dim[1].stride = publish_route.shape[1]
-            multiarray.data = publish_route.reshape(1, -1)[0].tolist()
-            self.base_waypoint_publisher.publish(multiarray)
-
-            self.waypoints = result_route
-        time.sleep(0.2) # 0.2秒後の情報を得るために1秒のインターバル
+        # if goal_flag:
+        self.waypoints = output_route
+        # """------------経路をpublish------------"""
+        # # 出力された経路と最も近いウェイポイントを計算
+        # error2waypoint = np.sum(np.abs(self.waypoints[:, :2] - self.current_pose), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
+        # # print("error2waypoint : ", error2waypoint)
+        # closest_waypoint = error2waypoint.argmin()
+        # self.waypoints = self.waypoints[closest_waypoint:]
+        # # print("publish route")
+        # multiarray = Float32MultiArray()
+        # multiarray.layout.dim.append(MultiArrayDimension())
+        # multiarray.layout.dim.append(MultiArrayDimension())
+        # multiarray.layout.dim[0].label = "height"
+        # multiarray.layout.dim[1].label = "width"
+        # multiarray.layout.dim[0].size = self.waypoints.shape[0]
+        # multiarray.layout.dim[1].size = self.waypoints.shape[1]
+        # multiarray.layout.dim[0].stride = self.waypoints.shape[0] * self.waypoints.shape[1]
+        # multiarray.layout.dim[1].stride = self.waypoints.shape[1]
+        # multiarray.data = self.waypoints.reshape(1, -1)[0].tolist()
+        # self.base_waypoint_publisher.publish(multiarray)
 
         "-----------GANの識別器によって人っぽいか人っぽくないかを判別-------------"
         # 経路の正規化(経路waypointsをgridmap)にまとめる)
@@ -402,7 +434,7 @@ class Environment(Node):
 
 
         # 生成されたresult_routeをgridmapにする.
-        for route in result_route:
+        for route in self.waypoints:
             grid_from_route = np.stack([np.full((self.grid_height, self.grid_width), route[0])
                                         ,np.full((self.grid_height, self.grid_width), route[1])], -1)
             # print("grid_from_route : ", grid_from_route.shape)
@@ -444,22 +476,96 @@ class Environment(Node):
         discriminator_output = discriminator_output.squeeze().detach().cpu().numpy()
         reward = 0.0
         done = False
+        global_final = False
+
+        # 出力された経路と最も近いウェイポイントを計算
+        error2waypoint = np.sum(np.abs(self.waypoints[:, :2] - self.current_pose), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
+        # print("error2waypoint : ", error2waypoint)
+        closest_waypoint = error2waypoint.argmin()
+        self.waypoints = self.waypoints[closest_waypoint:]
+        # print("publish route")
+        multiarray = Float32MultiArray()
+        multiarray.layout.dim.append(MultiArrayDimension())
+        multiarray.layout.dim.append(MultiArrayDimension())
+        multiarray.layout.dim[0].label = "height"
+        multiarray.layout.dim[1].label = "width"
+        multiarray.layout.dim[0].size = self.waypoints.shape[0]
+        multiarray.layout.dim[1].size = self.waypoints.shape[1]
+        multiarray.layout.dim[0].stride = self.waypoints.shape[0] * self.waypoints.shape[1]
+        multiarray.layout.dim[1].stride = self.waypoints.shape[1]
+        multiarray.data = self.waypoints.reshape(1, -1)[0].tolist()
+        self.base_waypoint_publisher.publish(multiarray)
+        print("行動中...!")
         if goal_flag is not True: # ゴールできないような経路を作成してしまった場合
+            self.penalty_num += 1
+            print("ゴールまでの経路を作成できなかった")
+            reward -= 1.0
             done = True
-            reward += 0.0
+        else:
+            self.penalty_num = 0
+
+        if self.penalty_num > 10:
+            done = True
+            reward -= 1.0
+            
+
         if dist_vehicle2goal > 1.0: # ゴールに到達できなかった場合
             reward += 0.0
+
         if np.round(discriminator_output) == 1: # 識別器によって、生成されたrouteが人っぽいと判断された場合
             reward += 0.0
 
-        if actions[0] < 0.1: # test
-            reward -= 1
-        if actions[0] > 0.13: # test
-            reward -= 1
+        # closest_waypointを探索
+        # print("self.expert_waypoints[:, :2] : ", self.expert_waypoints[:, :2].shape)
+        error2expwaypoint = np.linalg.norm(self.expert_waypoints[:, :2] - self.current_pose, axis=1)
+        # print("error2expwaypoint : ", error2expwaypoint)
+        closest_expwaypoint = error2expwaypoint.argmin()
+        # print("error_distance : ", error2expwaypoint[closest_expwaypoint])
+        if error2expwaypoint[closest_expwaypoint] > 5.0:
+            # print("closes_expwaypoint : ", closest_expwaypoint)
+            print("エラーが大きくできてしまった")
+            reward -= 1.0
+            done = True
+        
+        # 障害物に接触した場合
+        if self.on_collision_flag:
+            print("障害物と接触")
+            reward -= 1.0
+            done = True
+            self.on_collision_flag = False # 次の準備のためにFalseに変更しておく
 
-        return torch.FloatTensor([reward]), done
+        # ゴールに到達した場合
+        if np.linalg.norm(goal_position - self.current_pose) < 4.0:
+            print("ゴールしました")
+            reward += 1.0
+            self.complete_episode_num += 1
+            done = True
+        else:
+            self.complete_episode_num = 0
+        time.sleep(0.1)
+
+        if self.complete_episode_num >= 10:
+            print("10回ゴール [完全終了]")
+            global_final = True
+
+        return torch.FloatTensor([reward]), done, global_final
 
     def init_environment(self):
+        self.waypoints = np.array([[self.global_start[0], self.global_start[1], self.global_start[2], self.global_start[3], 0, self.global_start[5]]])
+        print("init_waypoints : ", self.waypoints.shape)
+        multiarray = Float32MultiArray()
+        multiarray.layout.dim.append(MultiArrayDimension())
+        multiarray.layout.dim.append(MultiArrayDimension())
+        multiarray.layout.dim[0].label = "height"
+        multiarray.layout.dim[1].label = "width"
+        multiarray.layout.dim[0].size = self.waypoints.shape[0]
+        multiarray.layout.dim[1].size = self.waypoints.shape[1]
+        multiarray.layout.dim[0].stride = self.waypoints.shape[0] * self.waypoints.shape[1]
+        multiarray.layout.dim[1].stride = self.waypoints.shape[1]
+        multiarray.data = self.waypoints.reshape(1, -1)[0].tolist()
+        self.base_waypoint_publisher.publish(multiarray)
+        time.sleep(0.2)
+        self.penalty_num = 0
         self.simulation_stop_flag = False
         self.env_thread = threading.Thread(target = self.environment_build, name = "LGSVL_Environment")
         self.env_thread.start()
@@ -525,11 +631,11 @@ class Environment(Node):
         self.closest_waypoint = 1
         episode_final = False # 最後の試行フラグ
 
-        with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time), 'a') as f:
-            writer = csv.writer(f)
-            writer.writerow(["eisode", "finished_step", "10_step_meaning"])
+        # with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time), 'a') as f:
+        #     writer = csv.writer(f)
+        #     writer.writerow(["eisode", "finished_step", "10_step_meaning"])
 
-        self.pandas_init()
+        # self.pandas_init()
 
         self.init_environment()
 
@@ -548,9 +654,9 @@ class Environment(Node):
                 with torch.no_grad():
                     action, _ = self.actor.act(state)
                 actions = action[0].cpu().type(torch.FloatTensor)
-                print("actions : ", actions)
+                # print("actions : \n", actions)
                     
-                reward, done = self.env_feedback(actions=actions) # errorを次のobsercation_next(次の状態)として扱う
+                reward, done, global_final = self.env_feedback(actions=actions) # errorを次のobsercation_next(次の状態)として扱う
                 observation = self.gridmap_object_value.transpose(2, 0, 1) # 次の状態を格納
                 
                 # self.path_record = self.path_record.append({"current_pose_x" : self.current_pose.pose.position.x,
@@ -563,7 +669,8 @@ class Environment(Node):
                 #                     }, ignore_index=True)
 
                 if done: # simulationが止まっていなかったらFalse, 終了するならTrue
-                    next_state = 0 # 便宜上, 0とおいておく. あとで省きます
+                    next_state = torch.from_numpy(observation).type(torch.FloatTensor).to(self.device) # 便宜上, 0とおいておく. あとで省きます
+                    next_state = torch.unsqueeze(next_state, 0)
 
                     episode_10_array[episode % 10] = frame
                     
@@ -573,20 +680,13 @@ class Environment(Node):
                     if reward == -1: # 途中で上手く走行できなかったら罰則として-1
                         print("[失敗]報酬 : - 1")
                         complete_episodes[episode % 10] = 0 # 連続成功記録をリセット
-                        self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
+                        # self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
                     
                     elif reward >= 1: # 何事もなく、上手く走行出来たら報酬として+1
                         print("[成功]報酬 : + 1")
                         complete_episodes[episode % 10] = 1 # 連続成功記録を+1
-                        self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
+                        # self.path_record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
 
-                    self.pandas_init()
-                    # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
-                    self.finish_environment()
-                    time.sleep(3)
-                    self.init_environment()
-
-                    
                     # episode += 1
                     frame = 0
 
@@ -611,17 +711,22 @@ class Environment(Node):
                     # 分散処理の最初の項が終了した場合、結果を記録
                     self.finish_environment()
                     print("%d Episode: Finished after %d frame : 10試行の平均frame数 = %.1lf" %(episode, frame, episode_10_array.mean()))
-                    with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time).format(), 'a') as f:
-                        writer = csv.writer(f)
-                        writer.writerow([episode, frame, episode_10_array.mean()])
-                    self.global_brain.td_memory.update_td_error()
+                    # with open('data_{}/episode_mean10_{}.csv'.format(now_time, now_time).format(), 'a') as f:
+                    #     writer = csv.writer(f)
+                    #     writer.writerow([episode, frame, episode_10_array.mean()])
+                    # self.global_brain.td_memory.update_td_error()
 
-                    if (episode % 2 == 0):
-                        self.global_brain.update_target_q_function()
+                    # if (episode % 2 == 0):
+                        # self.global_brain.update_target_q_function()
+                    # self.pandas_init()
+                    # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)
+                    self.finish_environment()
+                    time.sleep(3)
+                    self.init_environment()
                     break
-
-            if np.sum(complete_episodes) >= NUM_COMPLETE_EP:
-                print("8/10回連続成功")
+            
+            if global_final:
+                print("10回連続成功")
                 
                 torch.save(self.global_brain.actor_critic, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
                 print("無事に終了")
