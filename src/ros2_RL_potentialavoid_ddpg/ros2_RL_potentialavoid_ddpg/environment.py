@@ -39,8 +39,8 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
-# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potential_avoid/ros2_RL_potential_avoid")
+# os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
+os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -49,6 +49,8 @@ now_JST = datetime.datetime.now(JST)
 now_time = now_JST.strftime("%Y%m%d%H%M%S")
 os.makedirs("./data_{}/weight".format(now_time))
 os.makedirs("./data_{}/image".format(now_time))
+json_file_dir = "./data_{}/json".format(now_time)
+os.makedirs(json_file_dir)
 
 # Python program raising
 # exceptions in a python
@@ -89,12 +91,12 @@ class Environment(Node):
         self.on_collision_flag = False
         self.complete_episode_num = 0
         self.penalty_num = 0
-        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
-        # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_toavoid0.5.csv", header=None, skiprows=1).to_numpy()
+        # self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
         self.global_start = self.waypoints[0].copy()
         self.global_goal = self.waypoints[-1].copy()
-        self.expert_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
-        # self.expert_waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_ver2.csv", header=None, skiprows=1).to_numpy()
+        # self.expert_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        self.expert_waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
         self.expert_global_start = self.expert_waypoints[0].copy()
         self.expert_global_goal = self.expert_waypoints[-1].copy()
         self.map_offset = [43, 28.8, 6.6] # マップのズレを試行錯誤で治す！ ROS[x, y, z] ↔ Unity[z, -x, y]
@@ -112,8 +114,8 @@ class Environment(Node):
         self.num_actions = 2 # purepursuit 0.5mと2m
 
         self.obs_shape = [100, 100, 1]
-        self.actor_up = torch.tensor([3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 100]).to(self.device)
-        self.actor_down = torch.tensor([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 80]).to(self.device)
+        self.actor_up = torch.tensor([10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 100]).to(self.device)
+        self.actor_down = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 80]).to(self.device)
         self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
         self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
         self.actor_value = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
@@ -122,7 +124,7 @@ class Environment(Node):
         self.discriminator = Discriminator().to(self.device)
         self.reward_buffer = 0
 
-        self.global_brain = Brain(self.actor, self.critic, self.discriminator)
+        self.global_brain = Brain(self.actor, self.critic, self.discriminator, json_file_dir)
 
         # print("self.obs_shape : ", self.obs_shape)
         self.current_obs = torch.zeros(NUM_PROCESSES, self.obs_shape[2], self.obs_shape[0], self.obs_shape[1]) # torch size ([16, 4])
@@ -652,7 +654,7 @@ class Environment(Node):
 
             for step in range(MAX_STEPS):          
                 with torch.no_grad():
-                    action, _ = self.actor.act(state)
+                    action, _ = self.actor.act(state, episode)
                 actions = action[0].cpu().type(torch.FloatTensor)
                 # print("actions : \n", actions)
                     
@@ -698,7 +700,11 @@ class Environment(Node):
                 frame += 1
                 # if reward >= 1:
                 #     print("+1 報酬！！ : ", reward)
-                self.global_brain.memory.push(state, action, next_state, reward, done)
+                json_t_delta = datetime.timedelta(hours=9)
+                json_JST = datetime.timezone(json_t_delta, "JST")
+                json_now_JST = datetime.datetime.now(json_JST)
+                json_now_time = json_now_JST.strftime("%Y%m%d%H%M%S")
+                self.global_brain.memory.push(state, action, next_state, reward, done, json_now_time)
 
                 self.global_brain.td_memory.push(0)
 

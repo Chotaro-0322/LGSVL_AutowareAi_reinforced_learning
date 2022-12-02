@@ -1,15 +1,17 @@
+import os
 import random
 import torch
 import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 from collections import namedtuple
+import json
 
 import numpy as np
 
 BATCH_SIZE = 64
 NUM_STACK_FRAME = 4
-CAPACITY = 10000
+CAPACITY = 500
 GAMMA = 0.99
 
 TD_ERROR_EPSILON = 0.0001
@@ -25,23 +27,42 @@ config_clip = 0.2
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward", "done"))
 
 class ReplayMemory():
-    def __init__(self, CAPACITY):
+    def __init__(self, CAPACITY, json_file_dir):
         self.capacity = CAPACITY
-        self.memory = []
+        self.global_npy_list = []
         self.index = 0
+        self.json_file_dir = json_file_dir
 
-    def push(self, state, action, state_next, reward, done):
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
+    def push(self, state, action, state_next, reward, done, json_now_time):
+        if len(self.global_npy_list) < self.capacity:
+            self.global_npy_list.append(None)
+        
+        state = state.cpu().detach().numpy()
+        action = action
+        state_next = state_next.cpu().detach().numpy()
+        reward = reward.cpu().detach().numpy()
+        Transition_dict = Transition(state, action, state_next, reward, done)._asdict()
+        np.save(os.path.join(self.json_file_dir , f"dict_{str(json_now_time)}.npy"), Transition_dict)
 
-        self.memory[self.index] = Transition(state, action, state_next, reward, done)
+        self.global_npy_list[self.index] = os.path.join(self.json_file_dir , f"dict_{str(json_now_time)}.npy")
         self.index = (self.index + 1) % self.capacity # 保存しているindexを1つずらす　→　1001 % self.capacity = 1となる
 
     def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+        batch_npy_list = random.sample(self.global_npy_list, batch_size)
+        print("json_list : ", batch_npy_list)
+        memory = []
+        for npy in batch_npy_list:
+            npy_object = np.load(npy, allow_pickle=True).item()
+            state = torch.from_numpy(npy_object["state"]).clone()
+            action = npy_object["action"]
+            state_next = torch.from_numpy(npy_object["next_state"]).clone()
+            reward = torch.from_numpy(npy_object["reward"]).clone()
+            done = npy_object["done"]
+            memory.append(Transition(state, action, state_next, reward, done))
+        return memory
     
     def __len__(self):
-        return len(self.memory)
+        return len(self.global_npy_list)
 
 class TDerrorMemory:
     def __init__(self, CAPACITY):
@@ -121,14 +142,15 @@ class Actor(nn.Module):
         # print("actor_output : ", actor_output.size())
         return actor_output
 
-    def act(self, x):
+    def act(self, x, episode):
+        std = 1 / (0.05 * episode + 1)
         action = self(x)
         # print("action : ", action.size())
         action = action.detach()
-
-        noise = torch.normal(action, std=0.2)
+        # print("output action : ", action)
+        noise = torch.normal(action, std=std)
         env_action = torch.clip(action + noise, -1, 1)
-        # print("env_action : ", env_action)
+        print("env_action : ", env_action)
 
         return env_action * self.action_scale + self.action_center , env_action
 
@@ -236,10 +258,10 @@ class Discriminator(nn.Module):
         return x
 
 class Brain:
-    def __init__(self, actor, critic, discriminator):
+    def __init__(self, actor, critic, discriminator, json_file_dir):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.memory = ReplayMemory(CAPACITY)
+        self.memory = ReplayMemory(CAPACITY, json_file_dir)
         self.td_memory = TDerrorMemory(CAPACITY)
 
         # actor(行動価値を求める)は２つ用意する
@@ -308,7 +330,7 @@ class Brain:
         # ミニバッチの作成
         batch, state_batch, action_batch, reward_batch, next_states, done_batch = self.make_minibatch(episode)
         #print("action_batch : ", action_batch.shape)
-        # print("non_final_next_states : ", next_states.shape)
+        print("non_final_next_states : ", next_states.shape)
         print("reward_batch : ", torch.sum(reward_batch))
         
         """----次の状態の価値を計算"""

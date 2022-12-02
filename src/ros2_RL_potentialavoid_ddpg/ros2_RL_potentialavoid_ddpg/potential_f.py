@@ -121,7 +121,7 @@ class Potential_avoid():
 
     def calculation(self, start, goal, actions, grid_map, yaw, velocity, change_flag, now_time):
         actions = actions.numpy()
-        # print("actions : ", actions)
+        print("actions : \n", actions)
         # grid_map内の障害物の位置をまとめる
         grid_height, grid_width = grid_map.shape[0], grid_map.shape[1]
         # print("grid_map : ", grid_map.shape)
@@ -182,6 +182,6 @@ class Potential_avoid():
                 print("count over !!!")
                 goal_flag = False
                 break
-        self.plot(output_route, grid_map, goal, nearest_obstacle, obst_grid, actions, now_time)
+        # self.plot(output_route, grid_map, goal, nearest_obstacle, obst_grid, actions, now_time)
 
         return goal_flag, output_route
