@@ -34,7 +34,7 @@ class Potential_avoid():
                 elif obst[2] == 100: # 歩行者だった
                     obst_weight_x, obst_weight_y = actions[4], actions[5]
                 # print("obst_weight : ", obst_weight)
-                obst_pot =  1 / math.sqrt(pow((y - obst[1]), 2) + pow((x - obst[0]), 2)) * np.sqrt(np.square(obst_weight_x) + np.square(obst_weight_y))  # obst[2]にはその物体のobst_weightが入力されている 
+                obst_pot =  1 / np.sqrt(np.square((x - obst[0])/obst_weight_x) + np.square((y - obst[1])/obst_weight_y))
                 # obst_pot += obst_pot * self.weight_obst
 
             tmp_pot += obst_pot
@@ -49,11 +49,12 @@ class Potential_avoid():
 
         return pot_all
     
-    def plot(self, output_route, grid_map, goal, obst_target, obst_grid, actions, now_time):
+    def plot(self, output_route, grid_map, goal, obst_target, obst_grid, actions, now_time, episode):
         # print("actions : ", actions)
         grid_height, grid_width = grid_map.shape[:2]
         pot_map = np.zeros((100, 100))
         
+        obst_grid = np.zeros((0))
         for obst in obst_target:
             if obst[2] == 50: # ただの壁(costmapを作成したときに適当に決めた値)
                 obst_weight_x, obst_weight_y = actions[0], actions[0] # 壁はx,yでわけない
@@ -62,11 +63,21 @@ class Potential_avoid():
             elif obst[2] == 100: # 歩行者だった
                 obst_weight_x, obst_weight_y = actions[4], actions[5]
 
-            # print("grid_map[:2] : ", grid_map[:, :, :2].shape)
-            obst_pot = 1 / np.sqrt(np.sum(np.square(grid_map[:, :, :2] - obst[:2]), axis=2)) * np.sqrt(np.square(obst_weight_x) + np.square(obst_weight_y))
+            obst_pot = 1 / np.sqrt(np.square((grid_map[:, :, 0] - obst[0])/obst_weight_x) + np.square((grid_map[:, :, 1] - obst[1])/obst_weight_y)) # x, yでウェイトを分けたため式の変更
             # print("obst_pot : ", obst_pot.shape)
             # print("obst : ", obst[:2])
             pot_map += obst_pot
+
+            # grid上の物体の位置を記録
+            grid_from_pose = np.stack([np.full((grid_height, grid_width), obst[0])
+                                      ,np.full((grid_height, grid_width), obst[1])], -1)
+            # gridmapとgrid_fram_waypointの差を計算
+            error_grid_space = np.sum(np.abs(grid_map[:, :, :2] - grid_from_pose), axis=2)
+            # 計算された差から, 一番値が近いグリッドを計算
+            nearest_grid_space = np.array(np.unravel_index(np.argmin(error_grid_space), error_grid_space.shape)) # 最小値の座標を取得
+            obst_grid = np.block([obst_grid, nearest_grid_space])
+        obst_grid = obst_grid.reshape(-1, 2)
+        obst_grid[:, 0] = grid_height - obst_grid[:, 0] # 描写のために反転する
         
         # 障害物の位置はmaxにする
         # for o_grid in obst_grid:
@@ -77,15 +88,13 @@ class Potential_avoid():
 
         # 合計を算出
         pot_all = pot_map + actions[6] * goal_pot
-        pot_all  = np.clip(pot_all , -100, 100)
+        pot_all  = np.clip(pot_all , -10, 100)
 
         # 画像に構造を追加
         pot_all_max = np.max(pot_all)
         pot_all_min = np.min(pot_all)
         pot_all_normal = (pot_all - pot_all_min) / (pot_all_max - pot_all_min)
         
-        
-
         # ルートをプロット
         route_grid = np.zeros((0))
         for route in output_route:
@@ -102,7 +111,6 @@ class Potential_avoid():
             route_grid = np.block([route_grid, nearest_grid_space])
         route_grid = route_grid.reshape(-1, 2)
         route_grid[:, 0] = grid_height - route_grid[:, 0] # 描写のために反転する
-        
         # print("route_grid : ", route_grid)
 
         plot_t_delta = datetime.timedelta(hours=9)
@@ -114,12 +122,13 @@ class Potential_avoid():
         fig, ax = plt.subplots(figsize=(100, 100))
         ax.invert_yaxis()
         pot_all_normal = cv2.flip(pot_all_normal, 0)
-        sns.heatmap(pot_all_normal, square=True, cmap='RdBu')
-        plt.scatter(route_grid[:, 1], route_grid[:, 0], s=3000, marker="x", linewidths=10, c="green")
-        plt.savefig("./data_{}/image/potentional_map_{}.png".format(now_time, plot_now_time))
+        sns.heatmap(pot_all_normal, square=True, cmap='coolwarm')
+        plt.scatter(route_grid[:, 1], route_grid[:, 0], s=3000, marker="x", linewidths=30, c="green")
+        plt.scatter(obst_grid[:, 1], obst_grid[:, 0], s=3000, marker="^", linewidths=10, c="green")
+        plt.savefig("./data_{}/image/potentional_map_{}_ep_{}.jpg".format(now_time, plot_now_time, episode))
         # print("pot_all : ", pot_all.shape)
 
-    def calculation(self, start, goal, actions, grid_map, yaw, velocity, change_flag, now_time):
+    def calculation(self, start, goal, actions, grid_map, yaw, velocity, change_flag, now_time, episode, first_step):
         actions = actions.numpy()
         print("actions : \n", actions)
         # grid_map内の障害物の位置をまとめる
@@ -182,6 +191,7 @@ class Potential_avoid():
                 print("count over !!!")
                 goal_flag = False
                 break
-        # self.plot(output_route, grid_map, goal, nearest_obstacle, obst_grid, actions, now_time)
+        if episode % 10 == 0 and first_step == True:
+            self.plot(output_route, grid_map, goal, nearest_obstacle, obst_grid, actions, now_time, episode)
 
         return goal_flag, output_route
