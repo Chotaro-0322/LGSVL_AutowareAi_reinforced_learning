@@ -32,6 +32,8 @@ import csv
 import datetime
 import threading
 from tqdm import tqdm
+import glob
+import random
 
 MAX_STEPS = 200
 NUM_EPISODES = 1000
@@ -92,13 +94,11 @@ class Environment(Node):
         self.complete_episode_num = 0
         self.penalty_num = 0
         self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        self.base_expert_waypoints = self.waypoints
         # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
         self.global_start = self.waypoints[0].copy()
         self.global_goal = self.waypoints[-1].copy()
-        self.expert_waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
-        # self.expert_waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_avoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
-        self.expert_global_start = self.expert_waypoints[0].copy()
-        self.expert_global_goal = self.expert_waypoints[-1].copy()
+        self.expert_list = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_data/*.csv")
         self.map_offset = [43, 28.8, 6.6] # マップのズレを試行錯誤で治す！ ROS[x, y, z] ↔ Unity[z, -x, y]
         self.rotation_offset = [0, 0, 10]
         self.quaternion_offset = quaternion.from_rotation_vector(np.array(self.rotation_offset))
@@ -114,8 +114,8 @@ class Environment(Node):
         self.num_actions = 2 # purepursuit 0.5mと2m
 
         self.obs_shape = [100, 100, 1]
-        self.actor_up = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100]).to(self.device)
-        self.actor_down = torch.tensor([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 80]).to(self.device)
+        self.actor_up = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100]).to(self.device)
+        self.actor_down = torch.tensor([0.0001, 0.0001, -1.0, -1.0, 0.0001, 0.0001, -1.0, -1.0, 0.0001, 0.0001, -1.0, -1.0, 80]).to(self.device)
         self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
         self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
         self.actor_value = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
@@ -352,8 +352,8 @@ class Environment(Node):
     def env_feedback(self, actions, episode, first_step = False):
         time.sleep(0.1)
         """------------受け取ったactinosからポテンシャルウェイトを調節-----------------"""
-        self.actor_value += actions
-        self.actor_value = torch.max(torch.min(self.actor_value, self.actor_limit_high), self.actor_limit_low)
+        # self.actor_value += actions
+        # self.actor_value = torch.max(torch.min(self.actor_value, self.actor_limit_high), self.actor_limit_low)
         # print("actor_value : \n", self.actor_value)
         """------------経路をpublish------------"""
         # error2waypoint = np.sum(np.abs(self.waypoints[:, :2] - self.current_pose), axis=1) # 距離を測る場合、計算速度の都合上マンハッタン距離を使用
@@ -449,7 +449,12 @@ class Environment(Node):
             # print("self.vehicle_grid : ", self.vehicle_grid)
         
         # エキスパートrouteをgridmapにする.
-        for route in self.expert_waypoints:
+        # エキスパートデータを自動で選択
+        expert_name = random.choice(self.expert_list)
+        expert_array = pd.read_csv(expert_name, header=None, skiprows=1).to_numpy()
+        sample_waypoints_num = random.choice(range(len(expert_array) - 10)) # 10個前のwaypointsまでをランダムで選択して取り出す
+        expert_array = expert_array[sample_waypoints_num:]
+        for route in expert_array:
             grid_from_route = np.stack([np.full((self.grid_height, self.grid_width), route[0])
                                         ,np.full((self.grid_height, self.grid_width), route[1])], -1)
             # gridmapとgrid_fram_waypointの差を計算
@@ -506,14 +511,14 @@ class Environment(Node):
             reward_detail["dist_vehicle2goal"] = 0.0
 
         if np.round(discriminator_output) == 0: # 識別器によって、生成されたrouteが人っぽいと判断された場合
-            if episode > 30: # discriminatorの結果を使用するのは30episode以降
+            if episode > 15: # discriminatorの結果を使用するのは30episode以降
                 print("人ではないと判断されました")
                 reward -= 1.0
                 reward_detail["discriminator_output"] = 1.0
             else:
                 reward += 0.0
 
-        error2expwaypoint = np.linalg.norm(self.expert_waypoints[:, :2] - self.current_pose, axis=1)
+        error2expwaypoint = np.linalg.norm(self.base_expert_waypoints[:, :2] - self.current_pose, axis=1)
         closest_expwaypoint = error2expwaypoint.argmin()
         if error2expwaypoint[closest_expwaypoint] > 5.0:
             print("エラーが大きくできてしまった")
@@ -651,16 +656,19 @@ class Environment(Node):
         frame = 0
 
         for episode in tqdm(range(NUM_EPISODES)):
-            state =  self.gridmap_object_value.transpose(2, 0, 1)#誤差を状態として学習させたい
-
-            state = torch.from_numpy(state).type(torch.FloatTensor).to(self.device)
-            state = torch.unsqueeze(state, 0)
+            state_stack = torch.zeros(4, self.grid_height, self.grid_width)
+            for i in range(4):
+                state_stack[i] = torch.from_numpy(self.gridmap_object_value.transpose(2, 0, 1))
+            state_stack = torch.unsqueeze(state_stack, 0).type(torch.FloatTensor).to(self.device)
             
             reward_list = np.zeros(0)
-
             for step in range(MAX_STEPS):          
                 with torch.no_grad():
-                    action, _ = self.actor.act(state, episode)
+                    state_stack = torch.zeros(4, self.grid_height, self.grid_width)
+                    for i in range(4):
+                        state_stack[i] = torch.from_numpy(self.gridmap_object_value.transpose(2, 0, 1))
+                    state_stack = torch.unsqueeze(state_stack, 0).type(torch.FloatTensor).to(self.device)
+                    action, _ = self.actor.act(state_stack, episode)
                 actions = action[0].cpu().type(torch.FloatTensor)
                 # print("actions : \n", actions)
                 
@@ -668,8 +676,10 @@ class Environment(Node):
                 if step == 0: # 最初のステップならポテンシャル場を描写するためのfirst_step==Trueにする
                     first_step = True
                 reward, done, global_final, reward_detail = self.env_feedback(actions=actions, episode=episode, first_step=first_step) # errorを次のobsercation_next(次の状態)として扱う
-                observation = self.gridmap_object_value.transpose(2, 0, 1) # 次の状態を格納
-
+                observation_stack = torch.zeros(4, self.grid_height, self.grid_width)
+                for i in range(4): # 次の状態を格納
+                    observation_stack[i] = torch.from_numpy(self.gridmap_object_value.transpose(2, 0, 1))
+                observation_stack = torch.unsqueeze(observation_stack, 0).type(torch.FloatTensor).to(self.device)
                 # rewardの格納 & 10回分の平均を計算
                 reward_list = np.append(reward_list, reward)
                 mean_reward = np.mean(reward_list)
@@ -685,8 +695,7 @@ class Environment(Node):
                                                 "achive_goal": reward_detail["achive_goal"], "goal_flag" : reward_detail["goal_flag"]}, ignore_index=True)
 
                 if done: # simulationが止まっていなかったらFalse, 終了するならTrue
-                    next_state = torch.from_numpy(observation).type(torch.FloatTensor).to(self.device) # 便宜上, 0とおいておく. あとで省きます
-                    next_state = torch.unsqueeze(next_state, 0)
+                    next_state = observation_stack # 便宜上, 0とおいておく. あとで省きます
 
                     episode_10_array[episode % 10] = frame
                     
@@ -710,8 +719,8 @@ class Environment(Node):
 
                 else:
                     self.each_step += 1
-                    next_state = torch.from_numpy(observation).type(torch.FloatTensor).to(self.device)
-                    next_state = torch.unsqueeze(next_state, 0)
+                    next_state = observation_stack
+                print("next_state : ", next_state.size())
                         
                 frame += 1
                 # if reward >= 1:
@@ -720,7 +729,7 @@ class Environment(Node):
                 json_JST = datetime.timezone(json_t_delta, "JST")
                 json_now_JST = datetime.datetime.now(json_JST)
                 json_now_time = json_now_JST.strftime("%Y%m%d%H%M%S")
-                self.global_brain.memory.push(state, action, next_state, reward, done, json_now_time)
+                self.global_brain.memory.push(state_stack, action, next_state, reward, done, json_now_time)
 
                 self.global_brain.td_memory.push(0)
 

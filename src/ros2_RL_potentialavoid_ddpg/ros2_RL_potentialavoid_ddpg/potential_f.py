@@ -16,7 +16,7 @@ class Potential_avoid():
         self.weight_obst = 0.1
         self.weight_goal = weight_goal
     
-    def cal_potential(self, x, y, goal, obst_target, actions):
+    def cal_potential(self, x, y, goal, obst_target, actions): #actions : [壁weight x, 壁weight y, 壁distance x, 壁distance y, ...]
         tmp_pot = 0
         for obst in obst_target:
             # 障害物がないとき(Noneがはいっている)
@@ -28,13 +28,13 @@ class Potential_avoid():
                 obst_pot = self.potential_max
             else:
                 if obst[2] == 50: # ただの壁(costmapを作成したときに適当に決めた値)
-                    obst_weight_x, obst_weight_y = actions[0], actions[0] # 壁はx,yでわけない
+                    obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[0], actions[0], 0, 0 # 壁はx,yでわけない
                 elif obst[2] == 75: # 車だった
-                    obst_weight_x, obst_weight_y = actions[2], actions[3]
+                    obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[4], actions[5], actions[6], actions[7] 
                 elif obst[2] == 100: # 歩行者だった
-                    obst_weight_x, obst_weight_y = actions[4], actions[5]
+                    obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[8], actions[9], actions[10], actions[11] 
                 # print("obst_weight : ", obst_weight)
-                obst_pot =  1 / np.sqrt(np.square((x - obst[0])/obst_weight_x) + np.square((y - obst[1])/obst_weight_y))
+                obst_pot =  1 / np.sqrt(np.square((x - obst[0] + obst_distance_x)/obst_weight_x) + np.square((y - obst[1] + obst_distance_y)/obst_weight_y))
                 # obst_pot += obst_pot * self.weight_obst
 
             tmp_pot += obst_pot
@@ -45,7 +45,7 @@ class Potential_avoid():
         else:
             goal_pot = -1 / math.sqrt(pow((y - goal[1]),  2) + pow((x - goal[0]),  2))
         
-        pot_all = tmp_pot + actions[6] * goal_pot # actions[6]はゴールのウェイト
+        pot_all = tmp_pot + actions[12] * goal_pot # actions[6]はゴールのウェイト
 
         return pot_all
     
@@ -57,13 +57,13 @@ class Potential_avoid():
         obst_grid = np.zeros((0))
         for obst in obst_target:
             if obst[2] == 50: # ただの壁(costmapを作成したときに適当に決めた値)
-                obst_weight_x, obst_weight_y = actions[0], actions[0] # 壁はx,yでわけない
+                obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[0], actions[0], 0, 0 # 壁はx,yでわけない
             elif obst[2] == 75: # 車だった
-                obst_weight_x, obst_weight_y = actions[2], actions[3]
+                obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[4], actions[5], actions[6], actions[7] 
             elif obst[2] == 100: # 歩行者だった
-                obst_weight_x, obst_weight_y = actions[4], actions[5]
+                obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[8], actions[9], actions[10], actions[11] 
 
-            obst_pot = 1 / np.sqrt(np.square((grid_map[:, :, 0] - obst[0])/obst_weight_x) + np.square((grid_map[:, :, 1] - obst[1])/obst_weight_y)) # x, yでウェイトを分けたため式の変更
+            obst_pot = 1 / np.sqrt(np.square((grid_map[:, :, 0] - obst[0] + obst_distance_x)/obst_weight_x) + np.square((grid_map[:, :, 1] - obst[1] + obst_distance_y)/obst_weight_y)) # x, yでウェイトを分けたため式の変更
             # print("obst_pot : ", obst_pot.shape)
             # print("obst : ", obst[:2])
             pot_map += obst_pot
@@ -88,7 +88,7 @@ class Potential_avoid():
 
         # 合計を算出
         pot_all = pot_map + actions[6] * goal_pot
-        pot_all  = np.clip(pot_all , -10, 100)
+        pot_all  = np.clip(pot_all , -2, 100)
 
         # 画像に構造を追加
         pot_all_max = np.max(pot_all)
