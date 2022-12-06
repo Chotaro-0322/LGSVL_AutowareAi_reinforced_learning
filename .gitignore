@@ -5,5 +5,10 @@ log/
 *.pth
 *.csv
 *.npy
+<<<<<<< HEAD
 *.png
 *.jpg
+=======
+*.jpg
+*.png
+>>>>>>> 3ee27500841901b3cecf9bafdee649818e0ccfa3

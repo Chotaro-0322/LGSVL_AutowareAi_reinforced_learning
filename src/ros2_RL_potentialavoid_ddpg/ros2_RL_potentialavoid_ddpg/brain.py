@@ -105,7 +105,7 @@ class Actor(nn.Module):
     def __init__(self, n_in, n_mid, n_out, action_space_high, action_space_low):
         super(Actor, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.conv2d_1 = nn.Conv2d(1, 32, kernel_size=8, stride=4)
+        self.conv2d_1 = nn.Conv2d(4, 32, kernel_size=8, stride=4) # [1フレーム目, 2フレーム目, 3フレーム目, 4フレーム目]
         self.conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
 
@@ -116,14 +116,14 @@ class Actor(nn.Module):
         self.fc = nn.Linear(64 * 9 * 9, 512)
 
         # Actor
-        self.fc2 = nn.Linear(512, n_out*2+1) # [壁x, 壁y, 車x, 車y, 人x, 人y, ゴール]
+        self.fc2 = nn.Linear(512, len(action_space_high)) # [壁x, 壁y, 車x, 車y, 人x, 人y, ゴール]など
 
         self.action_center = (action_space_high + action_space_low)/2
         self.action_scale = action_space_high - self.action_center
         self.action_range = action_space_high - action_space_low
 
     def forward(self, x):
-        # print("x: shape : ", x.size())
+        print("x: shape : ", x.size())
         # print("x : ", type(x))
         # print("first x size : ", x.size())
         x = F.relu(self.conv2d_1(x))
@@ -157,7 +157,7 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     def __init__(self, obs_shape1, obs_shape2, obs_shape3):
         super(Critic, self).__init__()
-        self.conv2d_1 = nn.Conv2d(2, 32, kernel_size=8, stride=4)
+        self.conv2d_1 = nn.Conv2d(5, 32, kernel_size=8, stride=4) #[1フレーム目, 2フレーム目, 3フレーム目, 4フレーム目, 拡張した行動の値]
         self.conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
         self.upsample = nn.Upsample(size=(100, 100), mode='bicubic')
@@ -315,12 +315,13 @@ class Brain:
         # print("batch.next_state : ", batch.next_state)
         # 各変数の要素をミニバッチに対応する形に変形する
         # 1x4がBATCH_SIZE分並んでいるところを　BATCH_SIZE x 4にする
+        print("batch.state : ", batch.state)
         state_batch = torch.cat(batch.state).detach().to(self.device)
+        print("state_batch : ", state_batch.size())
         action_batch = torch.cat(batch.action).detach().to(self.device)
         reward_batch = torch.cat(batch.reward).detach().to(self.device)
         next_state_batch = torch.cat(batch.next_state).detach().to(self.device)
         done_batch = batch.done
-
 
         return batch, state_batch, action_batch, reward_batch, next_state_batch, done_batch
     
