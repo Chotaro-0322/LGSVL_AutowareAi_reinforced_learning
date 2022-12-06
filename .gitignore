@@ -4,3 +4,6 @@ log/
 *.bag
 *.pth
 *.csv
+*.npy
+*.png
+*.jpg
