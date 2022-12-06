@@ -502,12 +502,12 @@ class Environment(Node):
             self.penalty_num += 1
             print("ゴールまでの経路を作成できなかった")
             reward -= 1.0
-            done = True
+            # done = True
         else:
             self.penalty_num = 0
 
         if self.penalty_num > 10:
-            done = True
+            # done = True
             reward -= 1.0
             
 
@@ -515,7 +515,7 @@ class Environment(Node):
             reward += 0.0
 
         if np.round(discriminator_output) == 1: # 識別器によって、生成されたrouteが人っぽいと判断された場合
-            reward += 0.0
+            reward += 1.0
 
         # closest_waypointを探索
         # print("self.expert_waypoints[:, :2] : ", self.expert_waypoints[:, :2].shape)
@@ -537,7 +537,7 @@ class Environment(Node):
             self.on_collision_flag = False # 次の準備のためにFalseに変更しておく
 
         # ゴールに到達した場合
-        if np.linalg.norm(goal_position - self.current_pose) < 4.0:
+        if np.linalg.norm(goal_position - self.current_pose) < 2.0:
             print("ゴールしました")
             reward += 1.0
             self.complete_episode_num += 1
