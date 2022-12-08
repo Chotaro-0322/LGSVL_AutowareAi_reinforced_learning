@@ -88,7 +88,7 @@ class Potential_avoid():
 
         # 合計を算出
         pot_all = pot_map + actions[6] * goal_pot
-        pot_all  = np.clip(pot_all , -2, 100)
+        # pot_all  = np.clip(pot_all , -2, 100)
 
         # 画像に構造を追加
         pot_all_max = np.max(pot_all)
@@ -119,13 +119,18 @@ class Potential_avoid():
         plot_now_time = plot_now_JST.strftime("%Y%m%d%H%M%S")
 
         # print("pot_all : \n", pot_all)
-        fig, ax = plt.subplots(figsize=(100, 100))
-        ax.invert_yaxis()
-        pot_all_normal = cv2.flip(pot_all_normal, 0)
-        sns.heatmap(pot_all_normal, square=True, cmap='coolwarm')
-        plt.scatter(route_grid[:, 1], route_grid[:, 0], s=3000, marker="x", linewidths=30, c="green")
-        plt.scatter(obst_grid[:, 1], obst_grid[:, 0], s=3000, marker="^", linewidths=10, c="green")
-        plt.savefig("./data_{}/image/potentional_map_{}_ep_{}.jpg".format(now_time, plot_now_time, episode))
+        # fig, ax = plt.subplots(figsize=(100, 100))
+        # ax.invert_yaxis()
+        # pot_all_normal = cv2.flip(pot_all_normal, 0)
+        # sns.heatmap(pot_all_normal, square=True, cmap='coolwarm')
+        # plt.scatter(route_grid[:, 1], route_grid[:, 0], s=3000, marker="x", linewidths=30, c="green")
+        # plt.scatter(obst_grid[:, 1], obst_grid[:, 0], s=3000, marker="^", linewidths=10, c="green")
+        # plt.savefig("./data_{}/image/potentional_map_{}_ep_{}.jpg".format(now_time, plot_now_time, episode))
+
+        dict = {"pot_all" : pot_all, "route" : route_grid, "obst_grid" : obst_grid}
+
+        np.save("./data_{}/image/potentional_map_{}_ep_{}.npy".format(now_time, plot_now_time, episode), dict)
+
         # print("pot_all : ", pot_all.shape)
 
     def calculation(self, start, goal, actions, grid_map, yaw, velocity, change_flag, now_time, episode, first_step):
@@ -191,7 +196,7 @@ class Potential_avoid():
                 print("count over !!!")
                 goal_flag = False
                 break
-        if episode % 10 == 0 and first_step == True:
-            self.plot(output_route, grid_map, goal, nearest_obstacle, obst_grid, actions, now_time, episode)
+        # if episode % 2 == 0 and first_step == True:
+        self.plot(output_route, grid_map, goal, nearest_obstacle, obst_grid, actions, now_time, episode)
 
         return goal_flag, output_route

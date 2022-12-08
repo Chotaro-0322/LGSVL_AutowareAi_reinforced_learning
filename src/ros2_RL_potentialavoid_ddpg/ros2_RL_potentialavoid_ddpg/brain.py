@@ -315,9 +315,9 @@ class Brain:
         # print("batch.next_state : ", batch.next_state)
         # 各変数の要素をミニバッチに対応する形に変形する
         # 1x4がBATCH_SIZE分並んでいるところを　BATCH_SIZE x 4にする
-        print("batch.state : ", batch.state)
+        # print("batch.state : ", batch.state)
         state_batch = torch.cat(batch.state).detach().to(self.device)
-        print("state_batch : ", state_batch.size())
+        # print("state_batch : ", state_batch.size())
         action_batch = torch.cat(batch.action).detach().to(self.device)
         reward_batch = torch.cat(batch.reward).detach().to(self.device)
         next_state_batch = torch.cat(batch.next_state).detach().to(self.device)
@@ -331,8 +331,8 @@ class Brain:
         # ミニバッチの作成
         batch, state_batch, action_batch, reward_batch, next_states, done_batch = self.make_minibatch(episode)
         #print("action_batch : ", action_batch.shape)
-        print("non_final_next_states : ", next_states.shape)
-        print("reward_batch : ", torch.sum(reward_batch))
+        # print("non_final_next_states : ", next_states.shape)
+        # print("reward_batch : ", torch.sum(reward_batch))
         
         """----次の状態の価値を計算"""
         n_state_action_values = self.target_actor(next_states)

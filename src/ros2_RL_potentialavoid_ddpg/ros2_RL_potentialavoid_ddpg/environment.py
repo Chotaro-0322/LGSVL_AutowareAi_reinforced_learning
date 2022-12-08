@@ -36,7 +36,7 @@ import glob
 import random
 
 MAX_STEPS = 200
-NUM_EPISODES = 1000
+NUM_EPISODES = 101
 NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
@@ -94,11 +94,19 @@ class Environment(Node):
         self.complete_episode_num = 0
         self.penalty_num = 0
         self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        
         self.base_expert_waypoints = self.waypoints
         # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
         self.global_start = self.waypoints[0].copy()
         self.global_goal = self.waypoints[-1].copy()
-        self.expert_list = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_data/*.csv")
+        self.expert_come_way_s1_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_come_way_s1.0/*.csv")
+        self.expert_cross_s05_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_cross_s0.5/*.csv")
+        self.expert_cross_way_s1_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_cross_way_s1.0/*.csv")
+        self.expert_data_simple_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_data_simple/*.csv")
+        self.expert_same_way_s05_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_same_way_s0.5/*.csv")
+        self.expert_same_way_s15_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_same_way_s1.5/*.csv")
+        self.scenario = [self.expert_come_way_s1_waypoints, self.expert_cross_s05_waypoints, self.expert_cross_way_s1_waypoints, self.expert_data_simple_waypoints, self.expert_same_way_s05_waypoints, self.expert_same_way_s15_waypoints]
+        self.scenario_name = ["expert_come_way_s1.0", "expert_cross_s0.5", "expert_cross_way_s1.0", "expert_data_simple", "expert_same_way_s0.5", "expert_same_way_s1.5"]
         self.map_offset = [43, 28.8, 6.6] # マップのズレを試行錯誤で治す！ ROS[x, y, z] ↔ Unity[z, -x, y]
         self.rotation_offset = [0, 0, 10]
         self.quaternion_offset = quaternion.from_rotation_vector(np.array(self.rotation_offset))
@@ -114,8 +122,8 @@ class Environment(Node):
         self.num_actions = 2 # purepursuit 0.5mと2m
 
         self.obs_shape = [100, 100, 1]
-        self.actor_up = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100]).to(self.device)
-        self.actor_down = torch.tensor([0.0001, 0.0001, -1.0, -1.0, 0.0001, 0.0001, -1.0, -1.0, 0.0001, 0.0001, -1.0, -1.0, 80]).to(self.device)
+        self.actor_up = torch.tensor([1.0, 1.0, 0.0, 0.0, 3.0, 3.0, 0.5, 0.5, 3.0, 3.0, 0.5, 0.5, 100]).to(self.device)
+        self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.0000, 0.0000, -0.5, -0.5, 0.0000, 0.0000, -0.5, -0.5, 80]).to(self.device)
         self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
         self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
         self.actor_value = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
@@ -232,15 +240,67 @@ class Environment(Node):
         obstacle_right = lgsvl.utils.transform_to_right(spawns[0])
         obstacle_up = lgsvl.utils.transform_to_up(spawns[0])
         # state.transform = spawns[0]
+        # state.transform.position = spawns[0].position + 8.0 * obstacle_right + 2.0 + obstacle_foward + -2.0 * obstacle_up # シニアカーの位置
         state.transform.position = spawns[0].position + 8.0 * obstacle_right + 2.0 + obstacle_foward + -2.0 * obstacle_up
+        
         self.ego = self.sim.add_agent(self.env.str("LGSVL__VEHICLE_0", lgsvl.wise.DefaultAssets.seniorcar), lgsvl.AgentType.EGO, state)
 
-        obstacle_foward = lgsvl.utils.transform_to_forward(spawns[0])
-        obstacle_state = lgsvl.AgentState()
-        obstacle_state.transform.position = state.transform.position + 10.0 * obstacle_foward
+        # どの環境を学習するかここでランダムに取り出す
+        # self.expert_num = random.randint(0, len(self.scenario))
+        self.expert_num = 0
+        self.expert_list = self.scenario[self.expert_num]
+        print("self.expert_list : ", self.expert_list)
+        obstacle_state = lgsvl.AgentState() 
+        
+        if self.scenario_name[self.expert_num] == "expert_come_way_s1.0":
+            obstacle_state.transform.position = state.transform.position + 12.0 * obstacle_foward# 歩行者が近づいてくる場合の初期値
+            obstacle_state.transform.rotation.y = 180 # 歩行者が近づいてくる場合の初期値
+            x = -20.0
+            y = 0.0
+            speed = 1.0
+        elif self.scenario_name[self.expert_num] == "expert_cross_s0.5":
+            obstacle_state.transform.position = state.transform.position + 6.0 * obstacle_foward + 6.0 * obstacle_right # 歩行者が右から横切る場合の初期位置
+            obstacle_state.transform.rotation.y = -90 # 歩行者が右から横切る場合の初期位置
+            x = 0.0 # 歩行者が右から横切る場合の初期位置の歩行者の目的地 このときの速度は1.0
+            y = -10.0 # 歩行者が右から横切る場合の初期位置の歩行者の目的地 このときの速度は1.0
+            speed = 0.5
+        elif self.scenario_name[self.expert_num] == "expert_cross_way_s1.0":
+            obstacle_state.transform.position = state.transform.position + 6.0 * obstacle_foward + 6.0 * obstacle_right # 歩行者が右から横切る場合の初期位置
+            obstacle_state.transform.rotation.y = -90 # 歩行者が右から横切る場合の初期位置
+            x = 0.0 # 歩行者が右から横切る場合の初期位置の歩行者の目的地 このときの速度は1.0
+            y = -10.0 # 歩行者が右から横切る場合の初期位置の歩行者の目的地 このときの速度は1.0
+            speed = 0.8
+        elif self.scenario_name[self.expert_num] == "expert_data_simple":
+            obstacle_state.transform.position = state.transform.position + 10.0 * obstacle_foward # 歩行者が動かない場合の実験
+            x = 0.0
+            y = 0.0
+            speed = 0.0
+        elif self.scenario_name[self.expert_num] == "expert_same_way_s0.5":
+            obstacle_state.transform.position = state.transform.position + 3.0 * obstacle_foward
+            x = 20
+            y = 0.0
+            speed = 0.5
+        elif self.scenario_name[self.expert_num] == "expert_same_way_s1.5":
+            obstacle_state.transform.position = state.transform.position + 3.0 * obstacle_foward
+            x = 20
+            y = 0.0
+            speed = 1.5
+
         
         self.obstacle_ego = self.sim.add_agent("Bob", lgsvl.AgentType.PEDESTRIAN, obstacle_state)
-        self.obstacle_ego.transform
+
+        # Create wypoints
+        pedestrian_waypoints = []
+        idle = 1
+        
+        pedestrian_waypoints.append(lgsvl.WalkWaypoint(obstacle_state.transform.position + x * obstacle_foward + y * obstacle_right , speed=speed, idle=1))
+        
+        def on_waypoint(agent, index):
+            print("Waypoint {} reached".format(index))
+        self.obstacle_ego.on_waypoint_reached(on_waypoint)
+
+        self.obstacle_ego.follow(pedestrian_waypoints, True)
+        
 
         self.lgsvl_objects = [
             self.obstacle_ego,
@@ -511,10 +571,10 @@ class Environment(Node):
             reward_detail["dist_vehicle2goal"] = 0.0
 
         if np.round(discriminator_output) == 0: # 識別器によって、生成されたrouteが人っぽいと判断された場合
-            if episode > 15: # discriminatorの結果を使用するのは30episode以降
+            if episode > 0: # discriminatorの結果を使用するのは30episode以降
                 print("人ではないと判断されました")
                 reward -= 1.0
-                reward_detail["discriminator_output"] = 1.0
+                reward_detail["discriminator_output"] = -1.0
             else:
                 reward += 0.0
 
@@ -552,7 +612,14 @@ class Environment(Node):
             print("ゴールまでの経路を作成できなかった")
             reward -= 1.0
             reward_detail["goal_flag"] = -1.0
-            done = True
+            # done = True
+
+        # if reward > 0:
+        #     reward = 1.0
+        # elif reward < 0:
+        #     reward = -1.0
+        # else:
+        #     reward = 0.0
 
         return torch.FloatTensor([reward]), done, global_final, reward_detail
 
