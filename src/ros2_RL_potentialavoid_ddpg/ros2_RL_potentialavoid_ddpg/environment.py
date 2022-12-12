@@ -247,7 +247,7 @@ class Environment(Node):
 
         # どの環境を学習するかここでランダムに取り出す
         # self.expert_num = random.randint(0, len(self.scenario))
-        self.expert_num = 0
+        self.expert_num = 2
         self.expert_list = self.scenario[self.expert_num]
         print("self.expert_list : ", self.expert_list)
         obstacle_state = lgsvl.AgentState() 
