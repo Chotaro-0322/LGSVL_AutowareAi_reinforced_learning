@@ -41,8 +41,8 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
-# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
+# os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
+os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -93,12 +93,14 @@ class Environment(Node):
         self.on_collision_flag = False
         self.complete_episode_num = 0
         self.penalty_num = 0
-        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        # self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
         self.base_expert_waypoints = self.waypoints
-        # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        
         self.global_start = self.waypoints[0].copy()
         self.global_goal = self.waypoints[-1].copy()
-        self.expert_list = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_data/*.csv")
+        # self.expert_list = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_data/*.csv")
+        self.expert_list = glob.glob("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/expert_data/*.csv")
         self.map_offset = [43, 28.8, 6.6] # マップのズレを試行錯誤で治す！ ROS[x, y, z] ↔ Unity[z, -x, y]
         self.rotation_offset = [0, 0, 10]
         self.quaternion_offset = quaternion.from_rotation_vector(np.array(self.rotation_offset))
@@ -503,21 +505,7 @@ class Environment(Node):
         multiarray.data = self.waypoints.reshape(1, -1)[0].tolist()
         self.base_waypoint_publisher.publish(multiarray)
         print("行動中...!")
-<<<<<<< HEAD
-        if goal_flag is not True: # ゴールできないような経路を作成してしまった場合
-            self.penalty_num += 1
-            print("ゴールまでの経路を作成できなかった")
-            reward -= 1.0
-            # done = True
-        else:
-            self.penalty_num = 0
 
-        if self.penalty_num > 10:
-            # done = True
-            reward -= 1.0
-            
-=======
->>>>>>> 3ee27500841901b3cecf9bafdee649818e0ccfa3
 
         reward_detail = {"dist_vehicle2goal" : 0, "discriminator_output" : 0, "error2expwaypoint" : 0, "on_collision_flag" : 0, "achive_goal": 0, "goal_flag" : 0}
                 
@@ -525,18 +513,14 @@ class Environment(Node):
             reward += 0.0
             reward_detail["dist_vehicle2goal"] = 0.0
 
-<<<<<<< HEAD
-        if np.round(discriminator_output) == 1: # 識別器によって、生成されたrouteが人っぽいと判断された場合
-            reward += 1.0
-=======
+
         if np.round(discriminator_output) == 0: # 識別器によって、生成されたrouteが人っぽいと判断された場合
             if episode > 15: # discriminatorの結果を使用するのは30episode以降
                 print("人ではないと判断されました")
-                reward -= 1.0
-                reward_detail["discriminator_output"] = 1.0
+                # reward -= 1.0
+                # reward_detail["discriminator_output"] = 1.0
             else:
                 reward += 0.0
->>>>>>> 3ee27500841901b3cecf9bafdee649818e0ccfa3
 
         error2expwaypoint = np.linalg.norm(self.base_expert_waypoints[:, :2] - self.current_pose, axis=1)
         closest_expwaypoint = error2expwaypoint.argmin()

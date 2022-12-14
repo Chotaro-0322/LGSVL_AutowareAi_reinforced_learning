@@ -123,7 +123,7 @@ class Actor(nn.Module):
         self.action_range = action_space_high - action_space_low
 
     def forward(self, x):
-        print("x: shape : ", x.size())
+        # print("x: shape : ", x.size())
         # print("x : ", type(x))
         # print("first x size : ", x.size())
         x = F.relu(self.conv2d_1(x))
@@ -315,9 +315,9 @@ class Brain:
         # print("batch.next_state : ", batch.next_state)
         # 各変数の要素をミニバッチに対応する形に変形する
         # 1x4がBATCH_SIZE分並んでいるところを　BATCH_SIZE x 4にする
-        print("batch.state : ", batch.state)
+        # print("batch.state : ", batch.state)
         state_batch = torch.cat(batch.state).detach().to(self.device)
-        print("state_batch : ", state_batch.size())
+        # print("state_batch : ", state_batch.size())
         action_batch = torch.cat(batch.action).detach().to(self.device)
         reward_batch = torch.cat(batch.reward).detach().to(self.device)
         next_state_batch = torch.cat(batch.next_state).detach().to(self.device)
