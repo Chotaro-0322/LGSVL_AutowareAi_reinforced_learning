@@ -49,7 +49,7 @@ class ReplayMemory():
 
     def sample(self, batch_size):
         batch_npy_list = random.sample(self.global_npy_list, batch_size)
-        print("json_list : ", batch_npy_list)
+        # print("json_list : ", batch_npy_list)
         memory = []
         for npy in batch_npy_list:
             npy_object = np.load(npy, allow_pickle=True).item()
@@ -105,45 +105,25 @@ class Actor(nn.Module):
     def __init__(self, n_in, n_mid, n_out, action_space_high, action_space_low):
         super(Actor, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.conv2d_1 = nn.Conv2d(4, 32, kernel_size=8, stride=4) # [1フレーム目, 2フレーム目, 3フレーム目, 4フレーム目]
-        self.conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-
-        self.batch_norm_1 = nn.InstanceNorm2d(32)
-        self.batch_norm_2 = nn.InstanceNorm2d(64)
-        self.batch_norm_3 = nn.InstanceNorm2d(64)
-
-        self.fc = nn.Linear(64 * 9 * 9, 512)
+        self.fc1 = nn.Linear(n_in, n_mid)
+        self.fc2 = nn.Linear(n_mid, n_mid)
 
         # Actor
-        self.fc2 = nn.Linear(512, len(action_space_high)) # [壁x, 壁y, 車x, 車y, 人x, 人y, ゴール]など
+        self.fc3 = nn.Linear(n_mid, len(action_space_high)) # [壁x, 壁y, 車x, 車y, 人x, 人y, ゴール]など
 
         self.action_center = (action_space_high + action_space_low)/2
         self.action_scale = action_space_high - self.action_center
         self.action_range = action_space_high - action_space_low
 
     def forward(self, x):
-        # print("x: shape : ", x.size())
-        # print("x : ", type(x))
-        # print("first x size : ", x.size())
-        x = F.relu(self.conv2d_1(x))
-        x = self.batch_norm_1(x)
-        x = F.relu(self.conv2d_2(x))
-        x = self.batch_norm_2(x)
-        x = F.relu(self.conv2d_3(x))
-        x = self.batch_norm_3(x)
-        # print("x size : ", x.size())
-        # print("x : ", x.size())
-        # print("x : ", x.size())
-        x = x.view(x.size(0), -1)
-        # print("x size flatten : ", x.size())
-        x = F.relu(self.fc(x))
-        actor_output = F.tanh(self.fc2(x)) # -1〜1にまとめる
-        # print("actor_output : ", actor_output.size())
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        actor_output = F.tanh(self.fc3(x)) # -1〜1にまとめる
         return actor_output
 
     def act(self, x, episode):
         std = 1 / (0.05 * episode + 1)
+        # print("x : ", x.size())
         action = self(x)
         # print("action : ", action.size())
         action = action.detach()
@@ -157,49 +137,24 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     def __init__(self, obs_shape1, obs_shape2, obs_shape3):
         super(Critic, self).__init__()
-        self.conv2d_1 = nn.Conv2d(5, 32, kernel_size=8, stride=4) #[1フレーム目, 2フレーム目, 3フレーム目, 4フレーム目, 拡張した行動の値]
-        self.conv2d_2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.conv2d_3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-        self.upsample = nn.Upsample(size=(100, 100), mode='bicubic')
-
-        self.batch_norm_1 = nn.InstanceNorm2d(32)
-        self.batch_norm_2 = nn.InstanceNorm2d(64)
-        self.batch_norm_3 = nn.InstanceNorm2d(64)
-
-        self.fc = nn.Linear(64 * 9 * 9, 512)
+        self.fc1 = nn.Linear(4, 32)
+        self.fc2 = nn.Linear(32, 64)
 
         # Critic
-        self.critic = nn.Linear(512, 1) # 価値V側
+        self.critic = nn.Linear(64, 1) # 価値V側
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x, actions):
-        actions = actions.unsqueeze(1).unsqueeze(1) # [batch_size, 1, 100, 100]まで拡張
-        # print("actions : ", actions.size())
-        # print("x : ", x.size())
-        actions = self.upsample(actions)
-        
         x = torch.cat((x, actions), dim = 1)
         # print("action : x -> ", x.size())
         x_2 = x
         # print("x: shape : ", x.size())
-        x = F.relu(self.conv2d_1(x))
-        x = self.batch_norm_1(x)
-        x = F.relu(self.conv2d_2(x))
-        x = self.batch_norm_2(x)
-        x = F.relu(self.conv2d_3(x))
-        x = self.batch_norm_3(x)
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.fc(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
         critic_output1 = self.critic(x)
 
-        x_2 = F.relu(self.conv2d_1(x_2))
-        x_2 = self.batch_norm_1(x_2)
-        x_2 = F.relu(self.conv2d_2(x_2))
-        x_2 = self.batch_norm_2(x_2)
-        x_2 = F.relu(self.conv2d_3(x_2))
-        x_2 = self.batch_norm_3(x_2)
-        x_2 = x_2.view(x_2.size(0), -1)
-        x_2 = F.relu(self.fc(x_2))
+        x_2 = F.relu(self.fc1(x_2))
+        x_2 = F.relu(self.fc2(x_2))
         critic_output2 = self.critic(x_2)
         
         return critic_output1, critic_output2
