@@ -35,14 +35,14 @@ from tqdm import tqdm
 import glob
 import random
 
-MAX_STEPS = 200
-NUM_EPISODES = 101
+MAX_STEPS = 500
+NUM_EPISODES = 1000
 NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-# os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
-os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
+# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -93,9 +93,10 @@ class Environment(Node):
         self.on_collision_flag = False
         self.complete_episode_num = 0
         self.penalty_num = 0
+        self.error2object  = 1000
 
-        # self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
-        self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
 
         self.base_expert_waypoints = self.waypoints
         
@@ -126,8 +127,8 @@ class Environment(Node):
         self.num_actions = 2 # purepursuit 0.5mと2m
 
         self.obs_shape = [100, 100, 1]
-        self.actor_up = torch.tensor([1.0, 1.0, 0.0, 0.0, 3.0, 3.0, 0.5, 0.5, 3.0, 3.0, 0.5, 0.5, 100]).to(self.device)
-        self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.0000, 0.0000, -0.5, -0.5, 0.0000, 0.0000, -0.5, -0.5, 80]).to(self.device)
+        self.actor_up = torch.tensor([0.2, 0.2, 0.0, 0.0, 10.0, 10.0, 0.5, 0.5, 10.0, 10.0, 0.5, 0.5, 100]).to(self.device)
+        self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.001, 0.001, -0.5, -0.5, 0.001, 0.001, -0.5, -0.5, 80]).to(self.device)
         self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
         self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
         self.actor_value = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
@@ -251,7 +252,7 @@ class Environment(Node):
 
         # どの環境を学習するかここでランダムに取り出す
         # self.expert_num = random.randint(0, len(self.scenario))
-        self.expert_num = 2
+        self.expert_num = 3
         self.expert_list = self.scenario[self.expert_num]
         print("self.expert_list : ", self.expert_list)
         obstacle_state = lgsvl.AgentState() 
@@ -355,6 +356,7 @@ class Environment(Node):
             self.sim.run(0.1)
             if running_count % 2 == 0:
                 self.lgsvl_object_publisher()
+                self.error2object = np.sqrt(np.square(self.obstacle_ego.transform.position.x - self.ego.transform.position.x) + np.square(self.obstacle_ego.transform.position.z - self.ego.transform.position.z))
                 # ego_quaternion = quaternion.from_rotation_vector(np.array([ego.state.transform.rotation.x, ego.state.transform.rotation.y, ego.state.transform.rotation.z]))
                 # print("ego_quaternion : ", ego_quaternion)
                 # NPCの位置を出力
@@ -568,7 +570,7 @@ class Environment(Node):
         self.base_waypoint_publisher.publish(multiarray)
         print("行動中...!")
 
-
+        
         reward_detail = {"dist_vehicle2goal" : 0, "discriminator_output" : 0, "error2expwaypoint" : 0, "on_collision_flag" : 0, "achive_goal": 0, "goal_flag" : 0}
                 
         if dist_vehicle2goal > 1.0: # ゴールに到達できなかった場合
@@ -586,7 +588,7 @@ class Environment(Node):
 
         error2expwaypoint = np.linalg.norm(self.base_expert_waypoints[:, :2] - self.current_pose, axis=1)
         closest_expwaypoint = error2expwaypoint.argmin()
-        if error2expwaypoint[closest_expwaypoint] > 5.0:
+        if error2expwaypoint[closest_expwaypoint] > 3.0:
             print("エラーが大きくできてしまった")
             reward -= 1.0
             reward_detail["error2expwaypoint"] = -1.0
@@ -664,14 +666,14 @@ class Environment(Node):
         self.env_thread.join()
 
     def pandas_init(self):
-        self.record = pd.DataFrame({"current_pose_x" : [self.current_pose[0]], "current_pose_y" : [self.current_pose[1]], "current_pose_z" : [0],
-                                        "reward" : [0], "reward_mean" : [0], 
-                                        "action_wall_x" : [0], "action_wall_y" : [0],
-                                        "action_vehicle_x ": [0], "action_vehicle_y ": [0],
-                                        "action_human_x" :  [0], "action_human_y" :  [0],
-                                        "dist_vehicle2goal" : [0], "discriminator_output" : [0],
-                                        "error2expwaypoint" : [0], "on_collision_flag" : [0],
-                                        "achive_goal": [0], "goal_flag" : [0]})
+        self.record = pd.DataFrame({"current_pose_x" : [self.current_pose[0]], "current_pose_y" : [self.current_pose[1]], "current_pose_z" : [0], "error2object" : [0],
+                                    "reward" : [0], "reward_mean" : [0], 
+                                    "action_wall_x" : [0], "action_wall_y" : [0],
+                                    "action_vehicle_x ": [0], "action_vehicle_y ": [0],
+                                    "action_human_x" :  [0], "action_human_y" :  [0],
+                                    "reward_dist_vehicle2goal" : [0], "reward_discriminator_output" : [0],
+                                    "reward_error2expwaypoint" : [0], "reward_on_collision_flag" : [0],
+                                    "reward_achive_goal": [0],  "goal_flag" : [0]})
             # print("Init path_record : \n", path_record)
 
     def lgsvl_object_publisher(self):
@@ -716,7 +718,11 @@ class Environment(Node):
         self.closest_waypoint = 1
         episode_final = False # 最後の試行フラグ
 
-        global_record = pd.DataFrame({"episode" : [0], "step_sum_reward" : [0], "result_step" : [0],
+        global_record = pd.DataFrame({"episode" : [0], "step_sum_reward" : [0], 
+                                      "reward_dist_vehicle2goal_sum" : [0], "reward_discriminator_output_sum" : [0],
+                                      "reward_error2expwaypoint_sum" : [0], "reward_on_collision_flag_sum" : [0],
+                                      "reward_achive_goal_sum": [0], 
+                                      "result_step" : [0],
                                       "states" : "dafault", "action_min" : [float(self.actor_down[0])], "action_max" : [float(self.actor_up[0])],
                                       "map_min" : [float(self.actor_down[-1])], "map_max" : [float(self.actor_up[-1])]})
 
@@ -735,6 +741,9 @@ class Environment(Node):
             state_stack = torch.unsqueeze(state_stack, 0).type(torch.FloatTensor).to(self.device)
             
             reward_list = np.zeros(0)
+            reward_detail_buffer = {"reward_dist_vehicle2goal_sum" : 0, "reward_discriminator_output_sum" : 0,
+                                    "reward_error2expwaypoint_sum" : 0, "reward_on_collision_flag_sum" : 0,
+                                    "reward_achive_goal_sum": 0}
             for step in range(MAX_STEPS):          
                 with torch.no_grad():
                     state_stack = torch.zeros(4, self.grid_height, self.grid_width)
@@ -753,19 +762,27 @@ class Environment(Node):
                 for i in range(4): # 次の状態を格納
                     observation_stack[i] = torch.from_numpy(self.gridmap_object_value.transpose(2, 0, 1))
                 observation_stack = torch.unsqueeze(observation_stack, 0).type(torch.FloatTensor).to(self.device)
+                
                 # rewardの格納 & 10回分の平均を計算
                 reward_list = np.append(reward_list, reward)
                 mean_reward = np.mean(reward_list)
+
+                # rewardの詳細をバッファーに足していく
+                reward_detail_buffer["reward_dist_vehicle2goal_sum"] += reward_detail["dist_vehicle2goal"]
+                reward_detail_buffer["reward_discriminator_output_sum"] += reward_detail["discriminator_output"]
+                reward_detail_buffer["reward_error2expwaypoint_sum"] += reward_detail["error2expwaypoint"]
+                reward_detail_buffer["reward_on_collision_flag_sum"] += reward_detail["on_collision_flag"]
+                reward_detail_buffer["reward_achive_goal_sum"] += reward_detail["achive_goal"]
                 
                 # データをcsvに保存
-                self.record = self.record.append({"current_pose_x" : self.current_pose[0], "current_pose_y" : self.current_pose[1], "current_pose_z" : 0,
+                self.record = self.record.append({"current_pose_x" : self.current_pose[0], "current_pose_y" : self.current_pose[1], "current_pose_z" : 0, "error2object" : self.error2object,
                                                 "reward" : float(reward), "reward_mean" : mean_reward, 
                                                 "action_wall_x" : float(actions[0]), "action_wall_y" : float(actions[0]),
                                                 "action_vehicle_x ": float(actions[2]), "action_vehicle_y ": float(actions[3]),
                                                 "action_human_x" :  float(actions[4]), "action_human_y" :  float(actions[5]), 
-                                                "dist_vehicle2goal" : reward_detail["dist_vehicle2goal"], "discriminator_output" : reward_detail["discriminator_output"], 
-                                                "error2expwaypoint" : reward_detail["error2expwaypoint"], "on_collision_flag" : reward_detail["on_collision_flag"], 
-                                                "achive_goal": reward_detail["achive_goal"], "goal_flag" : reward_detail["goal_flag"]}, ignore_index=True)
+                                                "reward_dist_vehicle2goal" : reward_detail["dist_vehicle2goal"], "reward_discriminator_output" : reward_detail["discriminator_output"], 
+                                                "reward_error2expwaypoint" : reward_detail["error2expwaypoint"], "reward_on_collision_flag" : reward_detail["on_collision_flag"],  
+                                                "reward_achive_goal": reward_detail["achive_goal"], "goal_flag" : reward_detail["goal_flag"]}, ignore_index=True)
 
                 if done: # simulationが止まっていなかったらFalse, 終了するならTrue
                     next_state = observation_stack # 便宜上, 0とおいておく. あとで省きます
@@ -775,14 +792,14 @@ class Environment(Node):
                     if episode % 10 == 0: # 10episodeごとにウェイトを保存
                         torch.save(self.global_brain.main_actor, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
 
-                    if reward <= -1: # 途中で上手く走行できなかったら罰則として-1
-                        print("[失敗]報酬 : - 1")
+                    if reward_detail["achive_goal"] == 0: # 途中で上手く走行できなかったら罰則として-1
+                        print("[失敗]")
                         complete_episodes[episode % 10] = 0 # 連続成功記録をリセット
                         self.record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
                         result = "failure"
                     
-                    elif reward >= 1: # 何事もなく、上手く走行出来たら報酬として+1
-                        print("[成功]報酬 : + 1")
+                    elif reward_detail["achive_goal"] == 1: # 何事もなく、上手く走行出来たら報酬として+1
+                        print("[成功]")
                         complete_episodes[episode % 10] = 1 # 連続成功記録を+1
                         self.record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
                         result = "success"
@@ -824,6 +841,11 @@ class Environment(Node):
                         # self.global_brain.update_target_q_function()
                     
                     global_record = global_record.append({"episode" : episode, "step_sum_reward" : np.sum(reward_list), 
+                                                          "reward_dist_vehicle2goal_sum" : reward_detail_buffer["reward_dist_vehicle2goal_sum"], 
+                                                          "reward_discriminator_output_sum" : reward_detail_buffer["reward_discriminator_output_sum"], 
+                                                          "reward_error2expwaypoint_sum" : reward_detail_buffer["reward_error2expwaypoint_sum"], 
+                                                          "reward_on_collision_flag_sum" : reward_detail_buffer["reward_on_collision_flag_sum"], 
+                                                          "reward_achive_goal_sum" : reward_detail_buffer["reward_achive_goal_sum"], 
                                                           "result_step" : step, "states" : result}, ignore_index=True)
                     
                     global_record.to_csv("./data_{}/global_log.csv".format(now_time))

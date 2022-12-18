@@ -42,8 +42,8 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-# os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
-os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ddpgavoid/ros2_RL_ddpgavoid")
+os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ddpgavoid/ros2_RL_ddpgavoid")
+# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ddpgavoid/ros2_RL_ddpgavoid")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -98,8 +98,8 @@ class Environment(Node):
         self.complete_episode_num = 0
         self.penalty_num = 0
 
-        # self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
-        self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
 
         self.base_expert_waypoints = self.waypoints
         
@@ -530,7 +530,7 @@ class Environment(Node):
 
         for episode in tqdm(range(NUM_EPISODES)):
             current_pose = self.current_pose
-            # print("current_pose : ", current_pose)
+            print("current_pose : ", current_pose)
             reward_list = np.zeros(0)
             for step in range(MAX_STEPS):  
                 # print("hello!")        

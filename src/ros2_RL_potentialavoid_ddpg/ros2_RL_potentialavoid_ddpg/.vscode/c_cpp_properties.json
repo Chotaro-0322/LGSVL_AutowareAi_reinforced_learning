@@ -1,0 +1,27 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/chohome/ros2_ws/install/tf2_sensor_msgs/include/**",
+        "/home/chohome/ros2_ws/install/tf2_kdl/include/**",
+        "/home/chohome/ros2_ws/install/tf2_geometry_msgs/include/**",
+        "/home/chohome/ros2_ws/install/tf2_eigen/include/**",
+        "/home/chohome/ros2_ws/install/tf2_ros/include/**",
+        "/home/chohome/ros2_ws/install/tf2_msgs/include/**",
+        "/home/chohome/ros2_ws/install/tf2/include/**",
+        "/opt/ros/dashing/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

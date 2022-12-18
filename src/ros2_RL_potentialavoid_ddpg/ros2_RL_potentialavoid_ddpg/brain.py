@@ -49,7 +49,7 @@ class ReplayMemory():
 
     def sample(self, batch_size):
         batch_npy_list = random.sample(self.global_npy_list, batch_size)
-        print("json_list : ", batch_npy_list)
+        # print("json_list : ", batch_npy_list)
         memory = []
         for npy in batch_npy_list:
             npy_object = np.load(npy, allow_pickle=True).item()
