@@ -127,8 +127,8 @@ class Environment(Node):
         self.num_actions = 2 # purepursuit 0.5mと2m
 
         self.obs_shape = [100, 100, 1]
-        self.actor_up = torch.tensor([0.2, 0.2, 0.0, 0.0, 10.0, 10.0, 0.5, 0.5, 10.0, 10.0, 0.5, 0.5, 100]).to(self.device)
-        self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.001, 0.001, -0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 80]).to(self.device)
+        self.actor_up = torch.tensor([0.2, 0.2, 0.0, 0.0, 5.0, 5.0, 0.5, 0.5, 5.0, 5.0, 0.5, 0.5, 100]).to(self.device)
+        self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.2, 0.2, -0.5, -0.5, 0.2, 0.2, -0.5, -0.5, 80]).to(self.device)
         self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
         self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
         self.actor_value = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])

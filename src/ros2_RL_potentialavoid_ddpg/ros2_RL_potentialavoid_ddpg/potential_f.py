@@ -33,6 +33,7 @@ class Potential_avoid():
                     obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[4], actions[5], actions[6], actions[7] 
                 elif obst[2] == 100: # 歩行者だった
                     obst_weight_x, obst_weight_y, obst_distance_x, obst_distance_y = actions[8], actions[9], actions[10], actions[11] 
+               
                 # print("obst_weight : ", obst_weight)
                 obst_pot =  1 / np.sqrt(np.square((x - obst[0] + obst_distance_x)/obst_weight_x) + np.square((y - obst[1] + obst_distance_y)/obst_weight_y))
                 # obst_pot += obst_pot * self.weight_obst
