@@ -50,9 +50,9 @@ JST = datetime.timezone(t_delta, "JST")
 now_JST = datetime.datetime.now(JST)
 now_time = now_JST.strftime("%Y%m%d%H%M%S")
 os.makedirs("./data_{}/weight".format(now_time))
-os.makedirs("./data_{}/image".format(now_time))
-json_file_dir = "./data_{}/json".format(now_time)
-os.makedirs(json_file_dir)
+os.makedirs("./data_{}/potential".format(now_time))
+buffer_file_dir = "./data_{}/buffer".format(now_time)
+os.makedirs(buffer_file_dir)
 
 # Python program raising
 # exceptions in a python
@@ -128,7 +128,7 @@ class Environment(Node):
 
         self.obs_shape = [100, 100, 1]
         self.actor_up = torch.tensor([0.2, 0.2, 0.0, 0.0, 10.0, 10.0, 0.5, 0.5, 10.0, 10.0, 0.5, 0.5, 100]).to(self.device)
-        self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.001, 0.001, -0.5, -0.5, 0.001, 0.001, -0.5, -0.5, 80]).to(self.device)
+        self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.001, 0.001, -0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 80]).to(self.device)
         self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
         self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
         self.actor_value = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
@@ -137,7 +137,7 @@ class Environment(Node):
         self.discriminator = Discriminator().to(self.device)
         self.reward_buffer = 0
 
-        self.global_brain = Brain(self.actor, self.critic, self.discriminator, json_file_dir)
+        self.global_brain = Brain(self.actor, self.critic, self.discriminator, buffer_file_dir)
 
         # print("self.obs_shape : ", self.obs_shape)
         self.current_obs = torch.zeros(NUM_PROCESSES, self.obs_shape[2], self.obs_shape[0], self.obs_shape[1]) # torch size ([16, 4])
@@ -254,7 +254,7 @@ class Environment(Node):
         # self.expert_num = random.randint(0, len(self.scenario))
         self.expert_num = 3
         self.expert_list = self.scenario[self.expert_num]
-        print("self.expert_list : ", self.expert_list)
+        # print("self.expert_list : ", self.expert_list)
         obstacle_state = lgsvl.AgentState() 
         
         if self.scenario_name[self.expert_num] == "expert_come_way_s1.0":
@@ -464,13 +464,14 @@ class Environment(Node):
         # print("waypoint shape : ", self.waypoints.shape)
         vehicle_position = np.array(self.vehicle_grid)
         goal_position = np.array([self.global_goal[0], self.global_goal[1]]) # 最終点をゴールとして設定 [x, y]
+        start_position = np.array([self.global_start[0], self.global_start[1]])
         # print("goal_posistion : ", goal_position)
         # print("current_pose : ", self.current_pose)
         yaw = self.waypoints[closest_waypoint, 3]
         velocity = 6
         change_flag = self.waypoints[0, 5]
         goal_flag, output_route = self.Potential_avoid.calculation(vehicle_position, goal_position, actions, self.gridmap, yaw, velocity, change_flag, now_time, episode, first_step)
-        print("output_route : ", output_route.shape)
+        # print("output_route : ", output_route.shape)
         # if goal_flag == True:
         # if goal_flag:
         self.waypoints = output_route
@@ -541,7 +542,7 @@ class Environment(Node):
         expert_route_grid_value = expert_route_grid_value[:, :, :, np.newaxis]
         # print("export_route : ", expert_route_grid_value.shape)
         expert_route_grid_value = torch.from_numpy(expert_route_grid_value.transpose(3, 2, 0, 1)).type(torch.FloatTensor).to(self.device)
-        self.global_brain.discriminator_update(generated_route_grid_value, expert_route_grid_value)
+        # self.global_brain.discriminator_update(generated_route_grid_value, expert_route_grid_value)
 
         # 報酬の設定
         dist_vehicle2goal = np.linalg.norm(goal_position - vehicle_position)
@@ -577,18 +578,22 @@ class Environment(Node):
             reward += 0.0
             reward_detail["dist_vehicle2goal"] = 0.0
 
-
-        if np.round(discriminator_output) == 0: # 識別器によって、生成されたrouteが人っぽいと判断された場合
-            if episode > 0: # discriminatorの結果を使用するのは30episode以降
-                print("人ではないと判断されました")
-                reward -= 1.0
-                reward_detail["discriminator_output"] = -1.0
-            else:
-                reward += 0.0
+        # 識別機の報酬計算
+        # if np.round(discriminator_output) == 0: # 識別器によって、生成されたrouteが人っぽいと判断された場合
+        #     if episode > 0: # discriminatorの結果を使用するのは30episode以降
+        #         print("人ではないと判断されました")
+        #         # reward -= 1.0
+        #         # reward_detail["discriminator_output"] = -1.0
+        #     else:
+        #         reward += 0.0
+        if np.round(discriminator_output) == 1:
+            print("人っぽいと判断されました")
+        reward += discriminator_output
+        reward_detail["discriminator_output"] = discriminator_output
 
         error2expwaypoint = np.linalg.norm(self.base_expert_waypoints[:, :2] - self.current_pose, axis=1)
         closest_expwaypoint = error2expwaypoint.argmin()
-        if error2expwaypoint[closest_expwaypoint] > 3.0:
+        if error2expwaypoint[closest_expwaypoint] > 2.5:
             print("エラーが大きくできてしまった")
             reward -= 1.0
             reward_detail["error2expwaypoint"] = -1.0
@@ -603,14 +608,16 @@ class Environment(Node):
             self.on_collision_flag = False # 次の準備のためにFalseに変更しておく
 
         # ゴールに到達した場合
-        if np.linalg.norm(goal_position - self.current_pose) < 2.0:
+        if np.linalg.norm(goal_position - self.current_pose) < 3.0:
             print("ゴールしました")
-            reward += 1.0
-            reward_detail["achive_goal"] = 1.0
             self.complete_episode_num += 1
             done = True
         else:
             self.complete_episode_num = 0
+        global_start2goal_dist = np.linalg.norm(goal_position - start_position)
+        goal_reward = (global_start2goal_dist - np.linalg.norm(goal_position - self.current_pose)) / global_start2goal_dist # 正規化を使い, 0〜1に報酬を設定
+        reward += goal_reward
+        reward_detail["achive_goal"] = goal_reward
         
         if self.complete_episode_num >= 10:
             print("10回ゴール [完全終了]")
@@ -628,13 +635,14 @@ class Environment(Node):
         #     reward = -1.0
         # else:
         #     reward = 0.0
+        print("reward list : ", reward_detail)
 
-        return torch.FloatTensor([reward]), done, global_final, reward_detail
+        return torch.FloatTensor([reward]), done, global_final, reward_detail, expert_route_grid_value, generated_route_grid_value
 
     def init_environment(self):
         # 速度を0にした仮想のwayointをpublishして勝手に前のwaypointsを使って走り出すのを防ぐ
         self.waypoints = np.array([[self.global_start[0], self.global_start[1], self.global_start[2], self.global_start[3], 0, self.global_start[5]]])
-        print("init_waypoints : ", self.waypoints.shape)
+        # print("init_waypoints : ", self.waypoints.shape)
         multiarray = Float32MultiArray()
         multiarray.layout.dim.append(MultiArrayDimension())
         multiarray.layout.dim.append(MultiArrayDimension())
@@ -744,6 +752,10 @@ class Environment(Node):
             reward_detail_buffer = {"reward_dist_vehicle2goal_sum" : 0, "reward_discriminator_output_sum" : 0,
                                     "reward_error2expwaypoint_sum" : 0, "reward_on_collision_flag_sum" : 0,
                                     "reward_achive_goal_sum": 0}
+
+            expert_route_buffer = torch.zeros(0)
+            generated_route_buffer = torch.zeros(0)
+
             for step in range(MAX_STEPS):          
                 with torch.no_grad():
                     state_stack = torch.zeros(4, self.grid_height, self.grid_width)
@@ -757,12 +769,21 @@ class Environment(Node):
                 first_step = False
                 if step == 0: # 最初のステップならポテンシャル場を描写するためのfirst_step==Trueにする
                     first_step = True
-                reward, done, global_final, reward_detail = self.env_feedback(actions=actions, episode=episode, first_step=first_step) # errorを次のobsercation_next(次の状態)として扱う
+                reward, done, global_final, reward_detail, exp_route_grid, gene_route_grid = self.env_feedback(actions=actions, episode=episode, first_step=first_step) # errorを次のobsercation_next(次の状態)として扱う
                 observation_stack = torch.zeros(4, self.grid_height, self.grid_width)
                 for i in range(4): # 次の状態を格納
                     observation_stack[i] = torch.from_numpy(self.gridmap_object_value.transpose(2, 0, 1))
                 observation_stack = torch.unsqueeze(observation_stack, 0).type(torch.FloatTensor).to(self.device)
-                
+
+                # route_gridを格納していく(あとでdisctiminatorの訓練に使う)
+                if expert_route_buffer.size()[0] != 0:
+                    expert_route_buffer = torch.cat([expert_route_buffer, exp_route_grid], dim=0)
+                    generated_route_buffer = torch.cat([generated_route_buffer, gene_route_grid], dim=0)
+                else:
+                    expert_route_buffer = exp_route_grid
+                    generated_route_buffer = gene_route_grid
+                print("expert_route_buffer.size() : ", expert_route_buffer.size())
+                                
                 # rewardの格納 & 10回分の平均を計算
                 reward_list = np.append(reward_list, reward)
                 mean_reward = np.mean(reward_list)
@@ -792,13 +813,13 @@ class Environment(Node):
                     if episode % 10 == 0: # 10episodeごとにウェイトを保存
                         torch.save(self.global_brain.main_actor, "./data_{}/weight/episode_{}_finish.pth".format(now_time, episode))
 
-                    if reward_detail["achive_goal"] == 0: # 途中で上手く走行できなかったら罰則として-1
+                    if reward_detail["achive_goal"] < 0.8: # 途中で上手く走行できなかったら罰則として-1
                         print("[失敗]")
                         complete_episodes[episode % 10] = 0 # 連続成功記録をリセット
                         self.record.to_csv("./data_{}/learning_log_{}_ep{}_failure.csv".format(now_time, now_time, episode))
                         result = "failure"
                     
-                    elif reward_detail["achive_goal"] == 1: # 何事もなく、上手く走行出来たら報酬として+1
+                    else: # 何事もなく、上手く走行出来たら報酬として+1
                         print("[成功]")
                         complete_episodes[episode % 10] = 1 # 連続成功記録を+1
                         self.record.to_csv("./data_{}/learning_log_{}_ep{}_success.csv".format(now_time, now_time, episode))
@@ -810,7 +831,7 @@ class Environment(Node):
                 else:
                     self.each_step += 1
                     next_state = observation_stack
-                print("next_state : ", next_state.size())
+                # print("next_state : ", next_state.size())
                         
                 frame += 1
                 # if reward >= 1:
@@ -849,6 +870,8 @@ class Environment(Node):
                                                           "result_step" : step, "states" : result}, ignore_index=True)
                     
                     global_record.to_csv("./data_{}/global_log.csv".format(now_time))
+
+                    self.global_brain.discriminator_update(generated_route_buffer, expert_route_buffer)
 
                     self.pandas_init()
                     # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)

@@ -150,7 +150,7 @@ class Actor(nn.Module):
         # print("output action : ", action)
         noise = torch.normal(action, std=std)
         env_action = torch.clip(action + noise, -1, 1)
-        print("env_action : ", env_action)
+        # print("env_action : ", env_action)
 
         return env_action * self.action_scale + self.action_center , env_action
 
@@ -254,7 +254,6 @@ class Discriminator(nn.Module):
         x = self.fc(x)
         x = self.sigmoid(x)
 
-        
         return x
 
 class Brain:
@@ -282,7 +281,7 @@ class Brain:
 
         self.actor_optimizer = optim.Adam(self.main_actor.parameters(), lr=0.0001)
         self.critic_optimizer = optim.Adam(self.main_critic.parameters(), lr=0.0001)
-        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.001)
+        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.01)
 
         self.actor_update_interval = 2
 
@@ -391,14 +390,14 @@ class Brain:
         self.target_actor.load_state_dict((soft_tau) * self.main_actor.state_dict() + (1-soft_tau) * self.target_actor.state_dict())
         self.target_critic.load_state_dict((soft_tau) * self.main_critic.state_dict() + (1-soft_tau) * self.target_critic.state_dict())
     
-    def discriminator_update(self, ppo_route, expert_route):
+    def discriminator_update(self, generated_route, expert_route):
         # ---- 識別器の学習----
-        real_label =  torch.ones(ppo_route.size()[0], 1, 1, 1).to(self.device)# img.size()[0]はバッチサイズのこと
-        fake_label = torch.zeros(expert_route.size()[0], 1, 1, 1).to(self.device)
+        real_label =  torch.ones(expert_route.size()[0], 1, 1, 1).to(self.device)# img.size()[0]はバッチサイズのこと
+        fake_label = torch.zeros(generated_route.size()[0], 1, 1, 1).to(self.device)
 
         # 識別器を用いて真偽を出力("生成された経路" と "用意した人間のデータ" を識別機に入力して結果を得る)
         # print("ppo_route : ", ppo_route.shape)
-        fake_outputs = self.discriminator(ppo_route)
+        fake_outputs = self.discriminator(generated_route)
         # print("fake_outputs : ", fake_outputs.shape)
         # print("expert_route : ", expert_route.shape)
         real_outputs = self.discriminator(expert_route)

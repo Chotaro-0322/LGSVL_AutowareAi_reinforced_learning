@@ -128,8 +128,11 @@ class Potential_avoid():
         # plt.savefig("./data_{}/image/potentional_map_{}_ep_{}.jpg".format(now_time, plot_now_time, episode))
 
         dict = {"pot_all" : pot_all, "route" : route_grid, "obst_grid" : obst_grid}
-
-        np.save("./data_{}/image/potentional_map_{}_ep_{}.npy".format(now_time, plot_now_time, episode), dict)
+        if os.path.exists("./data_{}/potential/ep{}".format(now_time, episode)):
+            pass
+        else:
+            os.makedirs("./data_{}/potential/ep{}".format(now_time, episode))
+        np.save("./data_{}/potential/ep{}/potentional_map_{}.npy".format(now_time, episode, plot_now_time), dict)
 
         # print("pot_all : ", pot_all.shape)
 
