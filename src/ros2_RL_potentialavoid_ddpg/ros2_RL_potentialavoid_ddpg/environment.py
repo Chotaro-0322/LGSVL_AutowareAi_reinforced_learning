@@ -41,8 +41,8 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
-# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
+# os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
+os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_potentialavoid_ddpg/ros2_RL_potentialavoid_ddpg")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
@@ -95,20 +95,27 @@ class Environment(Node):
         self.penalty_num = 0
         self.error2object  = 1000
 
-        self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
-        # self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        # self.waypoints = pd.read_csv("/home/chohome/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
+        self.waypoints = pd.read_csv("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/LGSeocho_expert_NOavoid0.5_transformed_ver1.csv", header=None, skiprows=1).to_numpy()
 
         self.base_expert_waypoints = self.waypoints
         
         self.global_start = self.waypoints[0].copy()
         self.global_goal = self.waypoints[-1].copy()
 
-        self.expert_come_way_s1_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_come_way_s1.0/*.csv")
-        self.expert_cross_s05_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_cross_s0.5/*.csv")
-        self.expert_cross_way_s1_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_cross_way_s1.0/*.csv")
-        self.expert_data_simple_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_data_simple/*.csv")
-        self.expert_same_way_s05_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_same_way_s0.5/*.csv")
-        self.expert_same_way_s15_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_same_way_s1.5/*.csv")
+        # self.expert_come_way_s1_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_come_way_s1.0/*.csv")
+        # self.expert_cross_s05_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_cross_s0.5/*.csv")
+        # self.expert_cross_way_s1_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_cross_way_s1.0/*.csv")
+        # self.expert_data_simple_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_data_simple/*.csv")
+        # self.expert_same_way_s05_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_same_way_s0.5/*.csv")
+        # self.expert_same_way_s15_waypoints = glob.glob("/home/chohome/Master_research/LGSVL/route/expert_same_way_s1.5/*.csv")
+        
+        self.expert_come_way_s1_waypoints = glob.glob("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/expert_come_way_s1.0/*.csv")
+        self.expert_cross_s05_waypoints = glob.glob("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/expert_cross_s0.5/*.csv")
+        self.expert_cross_way_s1_waypoints = glob.glob("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/expert_cross_way_s1.0/*.csv")
+        self.expert_data_simple_waypoints = glob.glob("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/expert_data_simple/*.csv")
+        self.expert_same_way_s05_waypoints = glob.glob("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/expert_same_way_s0.5/*.csv")
+        self.expert_same_way_s15_waypoints = glob.glob("/home/itolab-chotaro/HDD/Master_research/LGSVL/route/expert_same_way_s1.5/*.csv")
         self.scenario = [self.expert_come_way_s1_waypoints, self.expert_cross_s05_waypoints, self.expert_cross_way_s1_waypoints, self.expert_data_simple_waypoints, self.expert_same_way_s05_waypoints, self.expert_same_way_s15_waypoints]
         self.scenario_name = ["expert_come_way_s1.0", "expert_cross_s0.5", "expert_cross_way_s1.0", "expert_data_simple", "expert_same_way_s0.5", "expert_same_way_s1.5"]
 
@@ -593,7 +600,7 @@ class Environment(Node):
 
         error2expwaypoint = np.linalg.norm(self.base_expert_waypoints[:, :2] - self.current_pose, axis=1)
         closest_expwaypoint = error2expwaypoint.argmin()
-        if error2expwaypoint[closest_expwaypoint] > 2.5:
+        if error2expwaypoint[closest_expwaypoint] > 4.0:
             print("エラーが大きくできてしまった")
             reward -= 1.0
             reward_detail["error2expwaypoint"] = -1.0

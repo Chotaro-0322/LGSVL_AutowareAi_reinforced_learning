@@ -42,8 +42,8 @@ NUM_PROCESSES = 1
 NUM_ADVANCED_STEP = 50
 NUM_COMPLETE_EP = 8
 
-os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ddpgavoid/ros2_RL_ddpgavoid")
-# os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ddpgavoid/ros2_RL_ddpgavoid")
+#os.chdir("/home/chohome/Master_research/LGSVL/ros2_RL_ws/src/ros2_RL_ddpgavoid/ros2_RL_ddpgavoid")
+os.chdir("/home/itolab-chotaro/HDD/Master_research/LGSVL/ros2_RL/src/ros2_RL_ddpgavoid/ros2_RL_ddpgavoid")
 print("current pose : ", os.getcwd())
 
 t_delta = datetime.timedelta(hours=9)
