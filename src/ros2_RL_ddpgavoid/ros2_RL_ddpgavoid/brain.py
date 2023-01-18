@@ -122,13 +122,14 @@ class Actor(nn.Module):
         return actor_output
 
     def act(self, x, episode):
-        std = 1 / (0.05 * episode + 1)
+        # std = 1 / (0.05 * episode + 1)
+        std = 0.2
         # print("x : ", x.size())
         action = self(x)
         # print("action : ", action.size())
         action = action.detach()
         # print("output action : ", action)
-        noise = torch.normal(action, std=std)
+        noise = torch.normal(mean=torch.zeros(1), std=std).to(self.device)
         env_action = torch.clip(action + noise, -1, 1)
         print("env_action : ", env_action)
 
@@ -223,13 +224,13 @@ class Brain:
         self.main_actor = actor
         self.main_actor = self.init_weight(self.main_actor)
         self.target_actor = actor
-        self.target_actor = self.init_weight(self.target_actor)
+        self.target_actor.load_state_dict(self.main_actor.state_dict())
 
         # critic(状態価値を求める)は２つ用意する
         self.main_critic = critic
         self.main_critic = self.init_weight(self.main_critic)
         self.target_critic = critic
-        self.target_critic = self.init_weight(self.target_critic)
+        self.target_critic.load_state_dict(self.main_critic.state_dict())
 
         # Discriminator(GAN識別器)を用意
         self.discriminator = discriminator
@@ -282,7 +283,7 @@ class Brain:
     
     def actorcritic_update(self, step, episode):
         if len(self.memory) < BATCH_SIZE:
-            return
+            return 0, 0
         # ミニバッチの作成
         batch, state_batch, action_batch, reward_batch, next_states, done_batch = self.make_minibatch(episode)
         #print("action_batch : ", action_batch.shape)
@@ -332,7 +333,7 @@ class Brain:
         loss2 = torch.mean(torch.square(q_val - q2))
         critic_loss = loss1 + loss2
 
-        print("actor_loss : ", actor_loss, " | critic loss : ", critic_loss)
+        # print("actor_loss : ", actor_loss, " | critic loss : ", critic_loss)
 
         self.main_actor.eval()
         self.main_critic.train()
@@ -340,11 +341,21 @@ class Brain:
         critic_loss.backward()
         nn.utils.clip_grad_norm_(self.main_critic.parameters(), 0.5)
         self.critic_optimizer.step()
+
+        return float(actor_loss), float(critic_loss)
     
     def update_target_q_function(self):
         soft_tau = 0.02
-        self.target_actor.load_state_dict((soft_tau) * self.main_actor.state_dict() + (1-soft_tau) * self.target_actor.state_dict())
-        self.target_critic.load_state_dict((soft_tau) * self.main_critic.state_dict() + (1-soft_tau) * self.target_critic.state_dict())
+        new_actor = {}
+        new_critic = {}
+        print("self.main_actor.state_dict() : ", self.main_actor.state_dict().keys())
+        for key in self.main_actor.state_dict().keys():
+            new_actor[key] = (soft_tau) * self.main_actor.state_dict()[key] + (1-soft_tau) * self.target_actor.state_dict()[key]
+        for key in self.main_critic.state_dict().keys():
+            new_critic[key] = (soft_tau) * self.main_critic.state_dict()[key] + (1-soft_tau) * self.target_critic.state_dict()[key]
+
+        self.target_actor.load_state_dict(new_actor)
+        self.target_critic.load_state_dict(new_critic)
     
     def discriminator_update(self, ppo_route, expert_route):
         # ---- 識別器の学習----

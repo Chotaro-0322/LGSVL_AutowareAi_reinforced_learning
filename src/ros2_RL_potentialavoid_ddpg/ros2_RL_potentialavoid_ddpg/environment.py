@@ -127,7 +127,7 @@ class Environment(Node):
         self.num_actions = 2 # purepursuit 0.5mと2m
 
         self.obs_shape = [100, 100, 1]
-        self.actor_up = torch.tensor([0.2, 0.2, 0.0, 0.0, 5.0, 5.0, 0.5, 0.5, 5.0, 5.0, 0.5, 0.5, 100]).to(self.device)
+        self.actor_up = torch.tensor([0.0, 0.0, 0.0, 0.0, 5.0, 5.0, 0.5, 0.5, 5.0, 5.0, 0.5, 0.5, 100]).to(self.device)
         self.actor_down = torch.tensor([0.0000, 0.0000, -0.0, -0.0, 0.2, 0.2, -0.5, -0.5, 0.2, 0.2, -0.5, -0.5, 80]).to(self.device)
         self.actor_limit_high = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100])
         self.actor_limit_low = torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 80])
@@ -252,7 +252,7 @@ class Environment(Node):
 
         # どの環境を学習するかここでランダムに取り出す
         # self.expert_num = random.randint(0, len(self.scenario))
-        self.expert_num = 3
+        self.expert_num = 0
         self.expert_list = self.scenario[self.expert_num]
         # print("self.expert_list : ", self.expert_list)
         obstacle_state = lgsvl.AgentState() 
@@ -262,7 +262,7 @@ class Environment(Node):
             obstacle_state.transform.rotation.y = 180 # 歩行者が近づいてくる場合の初期値
             x = -20.0
             y = 0.0
-            speed = 1.0
+            speed = 0.8
         elif self.scenario_name[self.expert_num] == "expert_cross_s0.5":
             obstacle_state.transform.position = state.transform.position + 6.0 * obstacle_foward + 6.0 * obstacle_right # 歩行者が右から横切る場合の初期位置
             obstacle_state.transform.rotation.y = -90 # 歩行者が右から横切る場合の初期位置
@@ -301,7 +301,8 @@ class Environment(Node):
         pedestrian_waypoints.append(lgsvl.WalkWaypoint(obstacle_state.transform.position + x * obstacle_foward + y * obstacle_right , speed=speed, idle=1))
         
         def on_waypoint(agent, index):
-            print("Waypoint {} reached".format(index))
+            # print("Waypoint {} reached".format(index))
+            pass
         self.obstacle_ego.on_waypoint_reached(on_waypoint)
 
         self.obstacle_ego.follow(pedestrian_waypoints, True)
@@ -357,6 +358,7 @@ class Environment(Node):
             if running_count % 2 == 0:
                 self.lgsvl_object_publisher()
                 self.error2object = np.sqrt(np.square(self.obstacle_ego.transform.position.x - self.ego.transform.position.x) + np.square(self.obstacle_ego.transform.position.z - self.ego.transform.position.z))
+                print("self.error2object : ", self.error2object)
                 # ego_quaternion = quaternion.from_rotation_vector(np.array([ego.state.transform.rotation.x, ego.state.transform.rotation.y, ego.state.transform.rotation.z]))
                 # print("ego_quaternion : ", ego_quaternion)
                 # NPCの位置を出力
@@ -498,7 +500,7 @@ class Environment(Node):
         # 経路の正規化(経路waypointsをgridmap)にまとめる)
         generated_route_grid_value = np.zeros((self.grid_height, self.grid_width, 1))
         expert_route_grid_value = np.zeros((self.grid_height, self.grid_width, 1))
-        route_grid_xy = np.array(np.meshgrid(np.linspace(-10, 10, num=100), np.linspace(0, 20, num=100))).transpose(1, 2, 0)
+        route_grid_xy = np.array(np.meshgrid(np.linspace(-10, 10, num=100), np.linspace(0, 20, num=100)), dtype=object).transpose(1, 2, 0)
         # print("route_grid_xy : ", route_grid_xy.shape)
 
 
@@ -521,6 +523,7 @@ class Environment(Node):
         expert_array = pd.read_csv(expert_name, header=None, skiprows=1).to_numpy()
         sample_waypoints_num = random.choice(range(len(expert_array) - 10)) # 10個前のwaypointsまでをランダムで選択して取り出す
         expert_array = expert_array[sample_waypoints_num:]
+        # print("expert_array : ", expert_array)
         for route in expert_array:
             grid_from_route = np.stack([np.full((self.grid_height, self.grid_width), route[0])
                                         ,np.full((self.grid_height, self.grid_width), route[1])], -1)
@@ -579,17 +582,12 @@ class Environment(Node):
             reward_detail["dist_vehicle2goal"] = 0.0
 
         # 識別機の報酬計算
-        # if np.round(discriminator_output) == 0: # 識別器によって、生成されたrouteが人っぽいと判断された場合
-        #     if episode > 0: # discriminatorの結果を使用するのは30episode以降
-        #         print("人ではないと判断されました")
-        #         # reward -= 1.0
-        #         # reward_detail["discriminator_output"] = -1.0
-        #     else:
-        #         reward += 0.0
         if np.round(discriminator_output) == 1:
             print("人っぽいと判断されました")
-        reward += discriminator_output
-        reward_detail["discriminator_output"] = discriminator_output
+        # reward += discriminator_output
+        # reward_detail["discriminator_output"] = discriminator_output
+        reward += 0
+        reward_detail["discriminator_output"] = 0
 
         error2expwaypoint = np.linalg.norm(self.base_expert_waypoints[:, :2] - self.current_pose, axis=1)
         closest_expwaypoint = error2expwaypoint.argmin()
@@ -635,7 +633,7 @@ class Environment(Node):
         #     reward = -1.0
         # else:
         #     reward = 0.0
-        print("reward list : ", reward_detail)
+        # print("reward list : ", reward_detail)
 
         return torch.FloatTensor([reward]), done, global_final, reward_detail, expert_route_grid_value, generated_route_grid_value
 
@@ -732,7 +730,8 @@ class Environment(Node):
                                       "reward_achive_goal_sum": [0], 
                                       "result_step" : [0],
                                       "states" : "dafault", "action_min" : [float(self.actor_down[0])], "action_max" : [float(self.actor_up[0])],
-                                      "map_min" : [float(self.actor_down[-1])], "map_max" : [float(self.actor_up[-1])]})
+                                      "map_min" : [float(self.actor_down[-1])], "map_max" : [float(self.actor_up[-1])],
+                                      "acotr_loss " : [0], "critic_loss" : [0], "discriminator_loss" : [0]})
 
         self.pandas_init()
 
@@ -755,6 +754,8 @@ class Environment(Node):
 
             expert_route_buffer = torch.zeros(0)
             generated_route_buffer = torch.zeros(0)
+            sum_actor_loss = 0
+            sum_ciritic_loss = 0
 
             for step in range(MAX_STEPS):          
                 with torch.no_grad():
@@ -782,7 +783,7 @@ class Environment(Node):
                 else:
                     expert_route_buffer = exp_route_grid
                     generated_route_buffer = gene_route_grid
-                print("expert_route_buffer.size() : ", expert_route_buffer.size())
+                # print("expert_route_buffer.size() : ", expert_route_buffer.size())
                                 
                 # rewardの格納 & 10回分の平均を計算
                 reward_list = np.append(reward_list, reward)
@@ -804,6 +805,7 @@ class Environment(Node):
                                                 "reward_dist_vehicle2goal" : reward_detail["dist_vehicle2goal"], "reward_discriminator_output" : reward_detail["discriminator_output"], 
                                                 "reward_error2expwaypoint" : reward_detail["error2expwaypoint"], "reward_on_collision_flag" : reward_detail["on_collision_flag"],  
                                                 "reward_achive_goal": reward_detail["achive_goal"], "goal_flag" : reward_detail["goal_flag"]}, ignore_index=True)
+                
 
                 if done: # simulationが止まっていなかったらFalse, 終了するならTrue
                     next_state = observation_stack # 便宜上, 0とおいておく. あとで省きます
@@ -834,6 +836,8 @@ class Environment(Node):
                 # print("next_state : ", next_state.size())
                         
                 frame += 1
+                if (frame % 2 == 0):
+                    self.global_brain.update_target_q_function()
                 # if reward >= 1:
                 #     print("+1 報酬！！ : ", reward)
                 json_t_delta = datetime.timedelta(hours=9)
@@ -844,7 +848,9 @@ class Environment(Node):
 
                 self.global_brain.td_memory.push(0)
 
-                self.global_brain.actorcritic_update(step, episode)
+                actor_loss, critic_loss = self.global_brain.actorcritic_update(step, episode)
+                sum_actor_loss += actor_loss
+                sum_ciritic_loss += critic_loss
 
                 state = next_state
                 # print("new state : ", state.size())
@@ -860,18 +866,19 @@ class Environment(Node):
 
                     # if (episode % 2 == 0):
                         # self.global_brain.update_target_q_function()
-                    
+
+                    discriminator_loss = self.global_brain.discriminator_update(generated_route_buffer, expert_route_buffer)
+
                     global_record = global_record.append({"episode" : episode, "step_sum_reward" : np.sum(reward_list), 
                                                           "reward_dist_vehicle2goal_sum" : reward_detail_buffer["reward_dist_vehicle2goal_sum"], 
                                                           "reward_discriminator_output_sum" : reward_detail_buffer["reward_discriminator_output_sum"], 
                                                           "reward_error2expwaypoint_sum" : reward_detail_buffer["reward_error2expwaypoint_sum"], 
                                                           "reward_on_collision_flag_sum" : reward_detail_buffer["reward_on_collision_flag_sum"], 
                                                           "reward_achive_goal_sum" : reward_detail_buffer["reward_achive_goal_sum"], 
-                                                          "result_step" : step, "states" : result}, ignore_index=True)
+                                                          "result_step" : step, "states" : result, 
+                                                          "actor_loss" : actor_loss, "critic_loss" : critic_loss, "discriminator_loss" : discriminator_loss}, ignore_index=True)
                     
                     global_record.to_csv("./data_{}/global_log.csv".format(now_time))
-
-                    self.global_brain.discriminator_update(generated_route_buffer, expert_route_buffer)
 
                     self.pandas_init()
                     # done がTrueのとき、環境のリセット(分散学習のとき、env[i].reset()みたいなことをしないといけない. その場合、ワークステーション10台くらい必要)

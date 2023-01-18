@@ -143,7 +143,8 @@ class Actor(nn.Module):
         return actor_output
 
     def act(self, x, episode):
-        std = 1 / (0.05 * episode + 1)
+        # std = 1 / (0.05 * episode + 1)
+        std = 0.5
         action = self(x)
         # print("action : ", action.size())
         action = action.detach()
@@ -281,7 +282,7 @@ class Brain:
 
         self.actor_optimizer = optim.Adam(self.main_actor.parameters(), lr=0.0001)
         self.critic_optimizer = optim.Adam(self.main_critic.parameters(), lr=0.0001)
-        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.01)
+        self.discriminator_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.0001)
 
         self.actor_update_interval = 2
 
@@ -326,7 +327,7 @@ class Brain:
     
     def actorcritic_update(self, step, episode):
         if len(self.memory) < BATCH_SIZE:
-            return
+            return 0, 0
         # ミニバッチの作成
         batch, state_batch, action_batch, reward_batch, next_states, done_batch = self.make_minibatch(episode)
         #print("action_batch : ", action_batch.shape)
@@ -376,7 +377,7 @@ class Brain:
         loss2 = torch.mean(torch.square(q_val - q2))
         critic_loss = loss1 + loss2
 
-        print("actor_loss : ", actor_loss, " | critic loss : ", critic_loss)
+        # print("actor_loss : ", actor_loss, " | critic loss : ", critic_loss)
 
         self.main_actor.eval()
         self.main_critic.train()
@@ -384,11 +385,21 @@ class Brain:
         critic_loss.backward()
         nn.utils.clip_grad_norm_(self.main_critic.parameters(), 0.5)
         self.critic_optimizer.step()
+
+        return float(actor_loss), float(critic_loss)
     
     def update_target_q_function(self):
         soft_tau = 0.02
-        self.target_actor.load_state_dict((soft_tau) * self.main_actor.state_dict() + (1-soft_tau) * self.target_actor.state_dict())
-        self.target_critic.load_state_dict((soft_tau) * self.main_critic.state_dict() + (1-soft_tau) * self.target_critic.state_dict())
+        new_actor = {}
+        new_critic = {}
+        # print("self.main_actor.state_dict() : ", self.main_actor.state_dict().keys())
+        for key in self.main_actor.state_dict().keys():
+            new_actor[key] = (soft_tau) * self.main_actor.state_dict()[key] + (1-soft_tau) * self.target_actor.state_dict()[key]
+        for key in self.main_critic.state_dict().keys():
+            new_critic[key] = (soft_tau) * self.main_critic.state_dict()[key] + (1-soft_tau) * self.target_critic.state_dict()[key]
+
+        self.target_actor.load_state_dict(new_actor)
+        self.target_critic.load_state_dict(new_critic)
     
     def discriminator_update(self, generated_route, expert_route):
         # ---- 識別器の学習----
@@ -410,7 +421,10 @@ class Brain:
         self.discriminator.train()
         mse_loss = nn.MSELoss()
         loss = mse_loss(authenticity_outputs, authenticity_targets) / 0.5
+        # print("discriminator_loss : ", loss)
         self.discriminator.zero_grad()
         loss.backward()
         self.discriminator_optimizer.step()
+        
+        return float(loss)
 

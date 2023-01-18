@@ -139,7 +139,7 @@ class Potential_avoid():
 
     def calculation(self, start, goal, actions, grid_map, yaw, velocity, change_flag, now_time, episode, first_step):
         actions = actions.numpy()
-        print("actions : \n", actions)
+        # print("actions : \n", actions)
         # grid_map内の障害物の位置をまとめる
         grid_height, grid_width = grid_map.shape[0], grid_map.shape[1]
         # print("grid_map : ", grid_map.shape)
